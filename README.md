@@ -1,6 +1,6 @@
 # Market Liquidity Monitor
 
-A system that combines real-time market data with LLM reasoning to monitor liquidity and order book depth.
+A production-grade system that combines real-time market data with LLM reasoning to monitor liquidity, analyze order book depth, and simulate historical execution.
 
 ## Architecture
 
@@ -9,23 +9,29 @@ A system that combines real-time market data with LLM reasoning to monitor liqui
 │                    User Interface (Streamlit)                │
 │  - Chat interface for natural language queries               │
 │  - Real-time order book visualization                        │
-│  - Fragmented updates for performance                        │
+│  - Multi-exchange comparison dashboard                       │
+│  - Historical backtest results viewer                        │
 └────────────┬────────────────────────────────────────────────┘
              │
              ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    Backend (FastAPI)                         │
-│  - Async API endpoints                                       │
+│  - Async API endpoints with Logfire observability           │
+│  - Circuit breaker pattern for resilience                   │
 │  - Dependency injection for exchange/agent management        │
-│  - Secure secrets management                                 │
 └────────────┬────────────────────────────────────────────────┘
              │
-             ├───────────┬─────────────┐
-             ▼           ▼             ▼
-┌──────────────┐  ┌────────────┐  ┌─────────────┐
-│ Data Engine  │  │ LLM Agent  │  │   Config    │
-│   (CCXT)     │  │(Pydantic-AI)│  │ Management  │
-└──────────────┘  └────────────┘  └─────────────┘
+             ├───────────┬─────────────┬──────────────┬────────┐
+             ▼           ▼             ▼              ▼        ▼
+┌──────────────┐  ┌────────────┐  ┌─────────┐  ┌──────────┐  ┌──────────┐
+│ Data Engine  │  │ LLM Agent  │  │  Redis  │  │PostgreSQL│  │ Logfire  │
+│   (CCXT)     │  │(Pydantic-AI)│  │  Cache  │  │   DB     │  │   APM    │
+│              │  │             │  │         │  │          │  │          │
+│ Multi-Venue  │  │ 6 Tools:    │  │ 5min TTL│  │ History  │  │ Spans &  │
+│ Parallel     │  │ - Backtest  │  │ Markets │  │ Snapshots│  │ Metrics  │
+│ Execution    │  │ - Compare   │  │ OHLCV   │  │ Alerts   │  │ Tracking │
+│              │  │ - Impact    │  │         │  │          │  │          │
+└──────────────┘  └────────────┘  └─────────┘  └──────────┘  └──────────┘
 ```
 
 ## Components
@@ -69,6 +75,75 @@ A system that combines real-time market data with LLM reasoning to monitor liqui
 - **Circuit Breaker**: Auto-suspends failing exchanges (Threshold: 5, Timeout: 30s)
 - **Connection Pooling**: Reuses CCXT clients for rate limit stability
 - **Caching**: 5-minute TTL for historical data
+
+## New Features (v2.0)
+
+### Multi-Exchange Comparison
+
+Compare liquidity across multiple exchanges in parallel with intelligent routing recommendations.
+
+**Key Capabilities:**
+
+- **Parallel Analysis**: Fetches order books from multiple venues simultaneously
+- **Arbitrage Detection**: Identifies fee-adjusted profit opportunities
+- **Venue Routing**: Recommends optimal exchange for execution
+- **Circuit Breaker Aware**: Excludes unhealthy exchanges automatically
+
+**Example Query:**
+
+```
+"Compare SOL liquidity on Binance and Kraken for a 1000 SOL buy order"
+```
+
+**Agent Response:**
+
+- Best venue recommendation with reasoning
+- Fill price (VWAP) for each eligible exchange
+- Slippage comparison in basis points
+- Arbitrage opportunity alerts with potential profit %
+
+### Historical Backtesting
+
+Simulate order execution during past market conditions using synthetic order book reconstruction.
+
+**Key Capabilities:**
+
+- **Time-Travel Simulation**: Analyze how orders would have performed historically
+- **Synthetic Order Books**: Reconstructed from OHLCV volatility using ATR modeling
+- **Risk Analysis**: Identifies high-risk periods (>200 bps slippage) and optimal windows (<50 bps)
+- **Volatility Profiling**: Tracks spread and volatility percentiles across the backtest period
+
+**Example Query:**
+
+```
+"How would buying 500 SOL have performed over the last 7 days?"
+```
+
+**Agent Response:**
+
+- Average, max, and min slippage in basis points
+- Number of high-risk vs optimal execution periods
+- Average fill price and theoretical total cost
+- Volatility profile (avg/max spread, volatility percentile)
+
+### Production Deployment
+
+Docker-based deployment with multi-service orchestration for production environments.
+
+**Infrastructure:**
+
+- **Multi-Stage Dockerfile**: Security-hardened with non-root execution
+- **4-Service Orchestration**: API, Frontend, Redis, PostgreSQL
+- **Health Checks**: Automatic monitoring and restart on failure
+- **Graceful Shutdown**: Proper cleanup of exchange connections
+
+**Quick Start:**
+
+```bash
+docker-compose up -d
+```
+
+See [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md) for complete deployment guide.
 
 ## Installation
 

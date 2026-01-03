@@ -1,13 +1,81 @@
 # Changelog
 
-All notable changes to the Market Liquidity Monitor project are documented in this file.
+All notable changes to the Market Liquidity Monitor will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.0.0] - 2026-01-03
+
+### Added
+
+- **Multi-Exchange Comparison**: Parallel liquidity analysis across multiple exchanges
+  - Arbitrage detection with fee-adjusted profitability calculations
+  - Intelligent venue routing recommendations
+  - Circuit breaker integration to exclude unhealthy exchanges
+  - Side-by-side comparison dashboard with metrics
+- **Historical Backtesting**: Time-travel execution simulation
+  - Synthetic order book reconstruction from OHLCV volatility
+  - ATR-based spread estimation and slippage modeling
+  - Risk period analysis (high-risk >200 bps, optimal <50 bps)
+  - Volatility profiling across backtest period
+  - Dashboard visualization with metric cards and summary analysis
+- **Logfire Instrumentation**: Comprehensive observability
+  - Granular spans for backtest phases (fetch, reconstruct, simulate)
+  - Performance tracking for OHLCV fetching and simulation
+  - Error attribution and debugging traces
+  - Cost analysis per tool execution
+- **Production Docker Deployment**:
+  - Multi-stage Dockerfile with security hardening
+  - 4-service orchestration (API, Frontend, Redis, PostgreSQL)
+  - Health checks for all services
+  - Graceful shutdown handling
+  - Non-root execution for security
+  - Complete deployment guide (DOCKER_DEPLOYMENT.md)
+- **New Data Models**:
+  - `VenueAnalysis`: Per-exchange liquidity metrics
+  - `CrossExchangeComparison`: Multi-venue comparison results
+  - `SyntheticOrderBook`: Reconstructed historical order book
+  - `BacktestReport`: Historical simulation results
+- **Documentation**:
+  - FEATURES.md: Comprehensive feature guide
+  - DOCKER_DEPLOYMENT.md: Production deployment instructions
+  - DOC_HEALTH_REPORT.md: Documentation audit results
+  - REMEDIATION_PLAN.md: Documentation improvement roadmap
+
+### Changed
+
+- **Enhanced `compare_exchanges` tool**:
+  - Added `order_size` and `side` parameters for market impact analysis
+  - Returns `CrossExchangeComparison` instead of basic comparison
+  - Includes arbitrage detection and routing recommendations
+- **Pinned Dependencies**: All requirements pinned for reproducible deployments
+  - ccxt==4.5.30
+  - fastapi==0.109.0
+  - streamlit==1.52.2
+  - pydantic-ai==0.0.13
+  - logfire[fastapi]==0.46.0
+- **Updated Architecture Diagram**: Now includes Redis, PostgreSQL, Circuit Breaker, and Logfire
+- **Frontend Enhancements**:
+  - Multi-exchange comparison visualization
+  - Historical backtest results viewer
+  - Arbitrage opportunity alerts
+  - Execution warning displays
+
+### Fixed
+
+- **Documentation Paths**: Corrected frontend entry point references
+  - README.md: `enhanced_app.py` → `app.py`
+  - QUICKSTART.md: Removed incorrect module prefix
+- **Circuit Breaker Integration**: All tools now check health before execution
+- **Precision Compliance**: All calculations use exchange-specific precision rules
+
+### Security
+
+- **Docker Security**: Non-root user execution in containers
+- **Secret Management**: Environment-based configuration
+- **.dockerignore**: Prevents sensitive files from entering images
 
 ---
 
-## [2.0.0] - 2026-01-02
+## [2.0.0-beta] - 2026-01-02
 
 ### 🎉 Major Release: Advanced Features
 
@@ -16,6 +84,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 ### Added
 
 #### Multi-Exchange Comparison
+
 - **New Tool**: `compare_exchanges()` in `agents/tools.py` (lines 90-219)
   - Compare liquidity across multiple exchanges simultaneously
   - Parallel execution using `asyncio.gather()`
@@ -35,6 +104,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - LLM-generated recommendations
 
 #### Historical Liquidity Tracking
+
 - **New Module**: `data_engine/historical.py` (368 lines)
   - `HistoricalTracker` class for snapshot management
   - `capture_snapshot()` - Record current liquidity state
@@ -52,6 +122,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - ISO timestamp for time-series analysis
 
 #### Alert System
+
 - **New Data Model**: `LiquidityAlert` in `data_engine/models.py` (lines 234-263)
   - Alert types: SPREAD_WIDENING, DEPTH_DROP, IMBALANCE, PRICE_ANOMALY
   - Severity levels: HIGH, MEDIUM, LOW
@@ -66,6 +137,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - Automatic severity assignment
 
 #### WebSocket Streaming
+
 - **New Module**: `data_engine/websocket_stream.py` (361 lines)
   - `OrderBookStream` - Single-exchange WebSocket streaming
   - `MultiExchangeStream` - Aggregate multiple exchanges
@@ -76,6 +148,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - Async context manager for lifecycle management
 
 #### Advanced Market Impact Modeling
+
 - **New Tool**: `calculate_market_impact()` in `agents/tools.py` (lines 222-299)
   - Order book walking simulation
   - Weighted average price calculation
@@ -90,6 +163,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - Example: Estimate slippage for $50,000 BTC buy order
 
 #### Liquidity Heatmap Visualization
+
 - **New Module**: `frontend/advanced_visualizations.py` (450 lines)
   - `create_liquidity_heatmap()` - Color-coded depth visualization
   - `create_exchange_comparison_chart()` - Multi-exchange comparison
@@ -100,6 +174,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - RdYlGn colorscale (red=thin, green=deep liquidity)
 
 #### Redis Caching Layer
+
 - **New Module**: `data_engine/cache.py` (392 lines)
   - `CacheManager` class with Redis backend
   - Automatic fallback to in-memory cache
@@ -111,6 +186,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - Connection pooling and lifecycle management
 
 #### Enhanced Streamlit UI
+
 - **New App**: `frontend/enhanced_app.py` (350 lines)
   - Multi-tab interface (Chat, Order Book, Multi-Exchange, Historical)
   - Market impact simulator with live calculations
@@ -121,6 +197,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - Session state management for conversation history
 
 #### Testing Infrastructure
+
 - **New Test Suite**: `tests/test_advanced_features.py` (430 lines)
   - `TestMultiExchangeComparison` - 3 tests
   - `TestMarketImpact` - 2 tests
@@ -132,6 +209,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
   - 85%+ code coverage for new features
 
 #### Documentation
+
 - **New Guide**: `ENHANCEMENTS.md` (820 lines)
   - Complete feature documentation
   - API usage examples
@@ -164,23 +242,27 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 ### Changed
 
 #### Data Models
+
 - **Enhanced**: `data_engine/models.py`
   - Added 3 new Pydantic models (ExchangeComparison, HistoricalSnapshot, LiquidityAlert)
   - Total lines: 162 → 263 (+101 lines)
 
 #### Agent Tools
+
 - **Enhanced**: `agents/tools.py`
   - Added 2 new tools (compare_exchanges, calculate_market_impact)
   - Updated tool registry: 3 → 5 tools
   - Total lines: 94 → 309 (+215 lines)
 
 #### API Routes
+
 - **Enhanced**: `api/routes.py`
   - Added 2 new endpoints (/compare-exchanges, /market-impact)
   - Total endpoints: 10 → 12
   - Total lines: 202 → 293 (+91 lines)
 
 #### Dependencies
+
 - **Enhanced**: `requirements.txt`
   - Added `redis>=5.0.0` for caching
   - Added `numpy>=1.24.0` for computations
@@ -189,27 +271,32 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 ### Performance Improvements
 
 #### Caching
+
 - **Order book fetches**: 200ms → 2ms (100x faster)
 - **Multi-exchange comparisons**: 1.5s → 15ms (100x faster)
 - **Historical queries**: 100ms → 5ms (20x faster)
 
 #### Parallel Execution
+
 - **Multi-exchange comparison**: Sequential (1.5s for 3 exchanges) → Parallel (500ms)
 - **Snapshot capture**: Single-threaded → Async (supports 50+ symbols)
 
 #### WebSocket Streaming
+
 - **Update latency**: Polling (1000ms) → WebSocket (50-100ms)
 - **Bandwidth**: Reduced by 80% (only deltas transmitted)
 
 ### Fixed
 
 #### Stability
+
 - Added automatic Redis fallback to in-memory cache
 - Added retry logic for exchange API failures
 - Added timeout handling for slow exchanges
 - Added WebSocket reconnection logic
 
 #### Error Handling
+
 - Better error messages for API endpoints
 - Validation for all user inputs via Pydantic
 - Graceful degradation when features unavailable
@@ -217,6 +304,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 ### Security
 
 #### Best Practices
+
 - No API keys in code (environment variables only)
 - Read-only exchange operations (no trading)
 - Input validation on all endpoints
@@ -229,6 +317,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 ### Initial Release
 
 #### Features
+
 - Basic order book fetching via CCXT
 - LLM reasoning with Pydantic-AI
 - FastAPI backend with REST endpoints
@@ -237,6 +326,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 - Natural language liquidity analysis
 
 #### Components
+
 - `data_engine/exchange.py` - CCXT integration
 - `data_engine/models.py` - Data models (OrderBook, LiquidityAnalysis)
 - `agents/market_agent.py` - Pydantic-AI agent
@@ -247,6 +337,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 - `config/settings.py` - Configuration management
 
 #### Documentation
+
 - `README.md` - Project overview
 - `QUICKSTART.md` - 5-minute setup guide
 - `IMPLEMENTATION_SUMMARY.md` - Technical details
@@ -267,6 +358,7 @@ This release introduces enterprise-grade features for professional cryptocurrenc
 ### From 1.0.0 to 2.0.0
 
 #### Prerequisites
+
 ```bash
 # Update dependencies
 pip install -r market_liquidity_monitor/requirements.txt
@@ -293,9 +385,11 @@ comparison = await compare_exchanges("SOL/USDT", ["binance", "coinbase"])
 #### UI Changes
 
 **Old UI**: `streamlit run market_liquidity_monitor/frontend/app.py`
+
 - Still functional, no changes required
 
 **New UI**: `streamlit run market_liquidity_monitor/frontend/enhanced_app.py`
+
 - Recommended for new deployments
 - Includes all new features
 
@@ -304,12 +398,14 @@ comparison = await compare_exchanges("SOL/USDT", ["binance", "coinbase"])
 **No breaking changes** - All existing endpoints work as before.
 
 **New endpoints**:
+
 - `POST /api/v1/compare-exchanges`
 - `POST /api/v1/market-impact`
 
 #### Configuration
 
 **New environment variables** (optional):
+
 ```bash
 # Redis caching (falls back to in-memory if not set)
 REDIS_URL=redis://localhost:6379
@@ -329,14 +425,17 @@ All features from 1.0.0 are still supported and maintained.
 ## Known Issues
 
 ### WebSocket Support
+
 - Some exchanges (e.g., older CCXT versions) may not support `watch_order_book()`
 - Automatic fallback to polling ensures functionality
 
 ### Redis Connection
+
 - If Redis unavailable, system uses in-memory cache
 - No error, just reduced performance (no persistence across restarts)
 
 ### Historical Data
+
 - File-based storage limited to 1000 snapshots per symbol
 - For larger datasets, consider PostgreSQL backend (future enhancement)
 
