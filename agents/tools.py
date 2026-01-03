@@ -1,115 +1,108 @@
-"""
-Tool definitions for the LLM agent.
-
-These tools allow the agent to fetch real-time market data and perform analysis.
-"""
-
-from typing import Optional, List
+from typing import Optional, List, Annotated, Any
 from pydantic import Field
 import asyncio
+from pydantic_ai import ModelRetry, RunContext
 
-from ..data_engine import exchange_manager, OrderBook
-from ..data_engine.models import ExchangeComparison
+from data_engine import OrderBook, exchange_manager
+from data_engine.models import LiquidityAnalysis, ExchangeComparison
 
 
 async def get_order_book_depth(
-    symbol: str = Field(..., description="Trading pair symbol (e.g., 'SOL/USDT', 'BTC/USDT')"),
-    exchange: str = Field(default="binance", description="Exchange name (e.g., 'binance', 'coinbase')"),
-    levels: int = Field(default=20, description="Number of order book levels to fetch (default: 20)"),
+    ctx: RunContext[Any],
+    symbol: Annotated[str, Field(description="Standard trading pair symbol (e.g., 'BTC/USDT', 'SOL/USDC')")],
+    exchange: Annotated[str, Field(description="Target cryptocurrency exchange")] = "binance",
+    levels: Annotated[int, Field(description="Depth of the book to retrieve")] = 20,
 ) -> OrderBook:
     """
-    Fetch real-time order book depth for a trading pair.
+    Fetch real-time order book depth for a specific trading pair.
 
-    This tool retrieves the current bids (buy orders) and asks (sell orders)
-    from the specified exchange, allowing analysis of market liquidity.
-
-    Args:
-        symbol: Trading pair (e.g., 'SOL/USDT')
-        exchange: Exchange to query
-        levels: Number of price levels to retrieve
-
-    Returns:
-        OrderBook object with bid/ask data and computed metrics
+    Use this tool when you need to analyze the current supply (asks) and demand (bids). 
+    It is essential for calculating spreads, market depth, and identifying buy/sell walls.
+    If the ticker symbol is ambiguous, use search_trading_pairs first to find the exact symbol format (e.g., 'BTC/USDT').
     """
-    client = await exchange_manager.get_client(exchange)
-    orderbook = await client.fetch_order_book(symbol, limit=levels)
-    return orderbook
+    try:
+        client = await exchange_manager.get_client(exchange)
+        orderbook = await client.fetch_order_book(symbol, limit=levels)
+        return orderbook
+    except ValueError as e:
+        # If the symbol doesn't exist, guide the model to search for it
+        raise ModelRetry(
+            f"The symbol '{symbol}' was not found on '{exchange}'. Please use 'search_trading_pairs' to find the exact symbol format for this exchange."
+        )
+    except Exception as e:
+        if "exchange not found" in str(e).lower():
+            raise ModelRetry(f"Exchange '{exchange}' is not supported. Try 'binance', 'coinbase', or 'kraken'.")
+        raise e
 
 
 async def search_trading_pairs(
-    query: str = Field(..., description="Search term (e.g., 'SOL', 'BTC', 'ETH')"),
-    exchange: str = Field(default="binance", description="Exchange to search"),
+    ctx: RunContext[Any],
+    query: Annotated[str, Field(description="The coin or token to find pairs for (e.g., 'SOL', 'PEPE')")],
+    exchange: Annotated[str, Field(description="Exchange to search within")] = "binance",
 ) -> list[str]:
     """
-    Search for available trading pairs on an exchange.
+    Search for all available trading pairs matching a specific token or term.
 
-    Useful when the user mentions a token but doesn't specify the full pair
-    (e.g., user says "SOL" and we need to find "SOL/USDT").
-
-    Args:
-        query: Token symbol or search term
-        exchange: Exchange to search
-
-    Returns:
-        List of matching trading pair symbols
+    MANDATORY: Use this tool if you are unsure of the exact symbol formatting on a specific exchange. 
+    Common formats include 'BTC/USDT', 'BTC/USD', or 'BTC-PERP'.
+    This prevents 'Symbol not found' errors in other tools.
     """
-    client = await exchange_manager.get_client(exchange)
-    symbols = await client.search_symbol(query)
-    return symbols
+    try:
+        client = await exchange_manager.get_client(exchange)
+        symbols = await client.search_symbol(query)
+        if not symbols:
+            raise ModelRetry(f"No trading pairs found for '{query}' on '{exchange}'. Try a different search term or exchange.")
+        return symbols
+    except Exception as e:
+        if "exchange not found" in str(e).lower():
+            raise ModelRetry(f"Exchange '{exchange}' is not supported.")
+        raise e
 
 
 async def get_market_metadata(
-    symbol: str = Field(..., description="Trading pair symbol"),
-    exchange: str = Field(default="binance", description="Exchange name"),
+    ctx: RunContext[Any],
+    symbol: Annotated[str, Field(description="Precision trading pair symbol")],
+    exchange: Annotated[str, Field(description="Target exchange")] = "binance",
 ) -> dict:
     """
-    Get detailed market information for a trading pair.
+    Retrieve critical market metadata for a trading pair.
 
-    Provides metadata like precision requirements, trading limits,
-    and fee structure.
-
-    Args:
-        symbol: Trading pair
-        exchange: Exchange name
-
-    Returns:
-        Market metadata dictionary
+    MANDATORY: Use this tool before suggesting any order sizes or executing simulations. 
+    It provides:
+    - Minimum order size (amount)
+    - Minimum order cost (price * amount) - CRITICAL for avoiding exchange rejections.
+    - Price and amount precision requirements.
+    Ensure your suggested sizes meet these limits to prevent 'insufficient order size' errors.
     """
-    client = await exchange_manager.get_client(exchange)
-    info = await client.get_market_info(symbol)
-    return {
-        "symbol": info.get("symbol"),
-        "base": info.get("base"),
-        "quote": info.get("quote"),
-        "active": info.get("active"),
-        "precision": info.get("precision"),
-        "limits": info.get("limits"),
-    }
+    try:
+        client = await exchange_manager.get_client(exchange)
+        info = await client.get_market_info(symbol)
+        return {
+            "symbol": info.get("symbol"),
+            "base": info.get("base"),
+            "quote": info.get("quote"),
+            "active": info.get("active"),
+            "precision": info.get("precision"),
+            "limits": info.get("limits"),
+        }
+    except ValueError:
+        raise ModelRetry(f"Symbol '{symbol}' not found. Use 'search_trading_pairs' to verify.")
 
 
 async def compare_exchanges(
-    symbol: str = Field(..., description="Trading pair symbol (e.g., 'SOL/USDT')"),
-    exchanges: List[str] = Field(
-        default=["binance", "coinbase", "kraken"],
-        description="List of exchanges to compare (e.g., ['binance', 'coinbase', 'kraken'])"
-    ),
-    levels: int = Field(default=20, description="Number of order book levels to fetch"),
+    ctx: RunContext[Any],
+    symbol: Annotated[str, Field(description="Trading pair to compare across markets (e.g., 'BTC/USDT')")],
+    exchanges: Annotated[List[str], Field(description="List of exchanges to compare")] = ["binance", "coinbase", "kraken"],
+    levels: Annotated[int, Field(description="Amount of depth to compare.")] = 20,
 ) -> dict:
     """
-    Compare liquidity across multiple exchanges simultaneously.
+    Compare liquidity and pricing for a single symbol across multiple exchanges in parallel.
 
-    This tool fetches order books from multiple exchanges in parallel and
-    performs comparative analysis to identify the best exchange for trading,
-    arbitrage opportunities, and liquidity differences.
-
-    Args:
-        symbol: Trading pair to compare
-        exchanges: List of exchange names to query
-        levels: Number of order book levels
-
-    Returns:
-        Dictionary with comparison data including best exchange recommendations
-        and arbitrage opportunities
+    Use this tool to identify:
+    - Where the tightest spread is currently located
+    - Arbitrage opportunities (price discrepancies between markets)
+    - Which exchange has the deepest 'walls' or support levels
+    Returns localized metrics for each exchange plus a comparative synthesis.
     """
     # Fetch order books in parallel for performance
     async def fetch_from_exchange(exchange: str):
@@ -136,15 +129,11 @@ async def compare_exchanges(
             failed_exchanges.append({"exchange": exchange, "error": error})
 
     if not successful_books:
-        return {
-            "error": "Failed to fetch order books from all exchanges",
-            "failed_exchanges": failed_exchanges
-        }
+        raise ModelRetry(f"Could not fetch data for '{symbol}' from any of the requested exchanges: {exchanges}. Verify the symbol exists on these exchanges.")
 
     # Calculate comparative metrics
     exchange_names = [ex for ex, _ in successful_books]
-    order_books = [ob for _, ob in successful_books]
-
+    
     # Find best bid (highest)
     best_bid_data = max(
         [(ex, ob.best_bid.price if ob.best_bid else 0) for ex, ob in successful_books],
@@ -179,16 +168,12 @@ async def compare_exchanges(
     arbitrage_profit_pct = None
     arbitrage_route = None
     if best_bid_data[1] > best_ask_data[1]:
-        # Arbitrage exists: buy on best_ask_exchange, sell on best_bid_exchange
         arbitrage_profit_pct = ((best_bid_data[1] - best_ask_data[1]) / best_ask_data[1]) * 100
         arbitrage_route = f"Buy on {best_ask_exchange} @ ${best_ask_data[1]:.2f}, Sell on {best_bid_exchange} @ ${best_bid_data[1]:.2f}"
 
     # Calculate average spread
     valid_spreads = [s for _, s in spreads if s != float('inf')]
     avg_spread = sum(valid_spreads) / len(valid_spreads) if valid_spreads else 0
-
-    # Calculate total liquidity
-    total_liquidity = sum(depth for _, depth in depths)
 
     return {
         "symbol": symbol,
@@ -206,7 +191,7 @@ async def compare_exchanges(
         "arbitrage_opportunity_pct": arbitrage_profit_pct,
         "arbitrage_route": arbitrage_route,
         "average_spread_pct": avg_spread,
-        "total_liquidity_volume": total_liquidity,
+        "total_liquidity_volume": sum(depth for _, depth in depths),
         "order_books": [
             {
                 "exchange": ex,
@@ -220,38 +205,41 @@ async def compare_exchanges(
 
 
 async def calculate_market_impact(
-    symbol: str = Field(..., description="Trading pair symbol"),
-    order_size_usd: float = Field(..., description="Order size in USD"),
-    side: str = Field(default="buy", description="'buy' or 'sell'"),
-    exchange: str = Field(default="binance", description="Exchange name"),
+    ctx: RunContext[Any],
+    symbol: Annotated[str, Field(description="Target trading pair symbol")],
+    order_size_usd: Annotated[float, Field(description="Simulated order size in USD")],
+    side: Annotated[str, Field(description="Trade direction ('buy' or 'sell')")] = "buy",
+    exchange: Annotated[str, Field(description="Exchange to simulate on")] = "binance",
 ) -> dict:
     """
-    Calculate detailed market impact and slippage for a potential order.
+    Simulate execution of a specific order size to determine slippage and price impact.
 
-    This tool simulates walking through the order book to determine:
-    - Average execution price
-    - Slippage percentage
-    - Price impact on the market
-    - Number of levels consumed
-
-    Args:
-        symbol: Trading pair
-        order_size_usd: Order size in USD
-        side: Trade direction ('buy' or 'sell')
-        exchange: Exchange to analyze
-
-    Returns:
-        Dictionary with detailed market impact metrics
+    Use this tool to answer questions like 'How much slippage for a $10k trade?' or 'Can I buy 5 BTC without moving the price?'.
+    It validates your order against exchange limits (amount and cost) and walks through the actual limit orders in the book to provide a realistic execution estimate.
+    If the order is too small for the exchange, This tool will provide feedback via a retry request.
     """
-    client = await exchange_manager.get_client(exchange)
-    orderbook = await client.fetch_order_book(symbol, limit=100)
+    try:
+        client = await exchange_manager.get_client(exchange)
+        orderbook = await client.fetch_order_book(symbol, limit=100)
+    except Exception:
+        raise ModelRetry(f"Failed to fetch order book for '{symbol}' on '{exchange}'. Please verify parameters.")
 
     # Determine which side of the book to use
     levels = orderbook.asks if side == "buy" else orderbook.bids
     best_price = orderbook.best_ask.price if side == "buy" else orderbook.best_bid.price
 
     if not levels or not best_price:
-        return {"error": "No liquidity available"}
+        raise ModelRetry(f"Insufficient liquidity data to simulate {side} order for {symbol} on {exchange}.")
+
+    # Validate order limits before simulation
+    # Convert USD size to base amount for validation
+    approx_amount = order_size_usd / best_price
+    is_valid, error_msg = client.validate_order_limits(symbol, approx_amount, best_price)
+    if not is_valid:
+        raise ModelRetry(
+            f"The proposed order does not meet {exchange} requirements: {error_msg}. "
+            "Please adjust the order size or try a more liquid pair."
+        )
 
     # Simulate order execution
     remaining_usd = order_size_usd
@@ -276,7 +264,8 @@ async def calculate_market_impact(
         return {
             "error": "Insufficient liquidity",
             "available_liquidity_usd": total_usd_spent,
-            "requested_usd": order_size_usd
+            "requested_usd": order_size_usd,
+            "sufficient_liquidity": False
         }
 
     # Calculate metrics

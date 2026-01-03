@@ -46,6 +46,50 @@ def initialize_session_state():
     if "last_analysis" not in st.session_state:
         st.session_state.last_analysis = None
 
+    if "current_symbol" not in st.session_state:
+        st.session_state.current_symbol = None
+
+    if "current_exchange" not in st.session_state:
+        st.session_state.current_exchange = settings.default_exchange
+
+
+@st.cache_resource
+def get_cached_client(exchange_id: str):
+    """
+    Cache the CCXT exchange client to reuse connections and respect rate limits.
+    """
+    from market_liquidity_monitor.data_engine.exchange import ExchangeClient
+    return ExchangeClient(exchange_id)
+
+
+def generate_analysis_report():
+    """
+    Callable for st.download_button to generate report on demand.
+    Ensures expensive logic only runs when user clicks.
+    """
+    analysis = st.session_state.get("last_analysis")
+    if not analysis:
+        return "No analysis available."
+
+    report = f"""# Liquidity Analysis Report
+Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+Symbol: {analysis.symbol}
+Exchange: {analysis.exchange}
+
+## Metrics
+- **Liquidity Score:** {analysis.liquidity_score}
+- **Spread:** {analysis.spread:.4f} ({analysis.spread_percentage:.3f}%)
+- **Bid Depth (10 levels):** {analysis.bid_depth_10:,.2f}
+- **Ask Depth (10 levels):** {analysis.ask_depth_10:,.2f}
+"""
+    if analysis.estimated_slippage_1k:
+        report += f"- **Estimated slippage ($1k):** {analysis.estimated_slippage_1k:.3f}%\n"
+    if analysis.estimated_slippage_10k:
+        report += f"- **Estimated slippage ($10k):** {analysis.estimated_slippage_10k:.3f}%\n"
+
+    report += f"\n## Reasoning\n{analysis.reasoning}\n"
+    return report
+
 
 def create_orderbook_chart(orderbook) -> go.Figure:
     """
@@ -141,9 +185,22 @@ def display_orderbook_metrics(orderbook):
         )
 
 
-@st.fragment
+@st.fragment(run_every="5s")
 def orderbook_visualization():
     """Fragment for real-time order book updates."""
+    # Poll for fresh data if we have a symbol
+    if st.session_state.current_symbol:
+        symbol = st.session_state.current_symbol
+        exchange = st.session_state.current_exchange
+        
+        try:
+            client = get_cached_client(exchange)
+            # Fetch fresh order book
+            orderbook = asyncio.run(client.fetch_order_book(symbol, limit=20))
+            st.session_state.current_orderbook = orderbook
+        except Exception as e:
+            st.error(f"Polling error: {e}")
+
     if st.session_state.current_orderbook:
         orderbook = st.session_state.current_orderbook
 
@@ -155,7 +212,7 @@ def orderbook_visualization():
         st.plotly_chart(fig, use_container_width=True)
 
         # Timestamp
-        st.caption(f"Last updated: {orderbook.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
 
 async def process_query(query: str) -> str:
@@ -188,12 +245,14 @@ async def process_query(query: str) -> str:
             exchange=exchange,
         )
 
-        # Store analysis
+        # Store and update current tracking state
         st.session_state.last_analysis = analysis
+        st.session_state.current_symbol = symbol
+        st.session_state.current_exchange = exchange
 
         # Also fetch and store order book for visualization
         if symbol:
-            client = await exchange_manager.get_client(exchange)
+            client = get_cached_client(exchange)
             orderbook = await client.fetch_order_book(symbol, limit=20)
             st.session_state.current_orderbook = orderbook
 
@@ -251,6 +310,17 @@ def main():
 
         st.markdown("---")
         st.caption(f"Model: {settings.default_model}")
+
+        # Download button for latest analysis (using callable for on-demand generation)
+        if st.session_state.last_analysis:
+            st.markdown("---")
+            st.download_button(
+                label="📥 Download Analysis Report",
+                data=generate_analysis_report,
+                file_name=f"liquidity_report_{datetime.now().strftime('%Y%md_%H%M%S')}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
 
     # Main content area
     col1, col2 = st.columns([1, 1])

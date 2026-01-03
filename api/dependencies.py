@@ -7,8 +7,8 @@ Provides reusable dependencies for exchange clients and agents.
 from typing import AsyncGenerator
 from fastapi import Depends
 
-from ..data_engine import ExchangeClient, exchange_manager
-from ..agents import market_analyzer, MarketAnalyzer
+from data_engine import ExchangeClient, exchange_manager
+from agents import market_analyzer, MarketAnalyzer
 
 
 async def get_exchange_client(
@@ -24,11 +24,7 @@ async def get_exchange_client(
         ExchangeClient instance
     """
     client = await exchange_manager.get_client(exchange_id)
-    try:
-        yield client
-    finally:
-        # Cleanup handled by exchange_manager
-        pass
+    yield client
 
 
 async def get_market_analyzer() -> MarketAnalyzer:

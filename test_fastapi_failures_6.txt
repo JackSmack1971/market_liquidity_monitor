@@ -1,0 +1,175 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.9, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\click\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\click\OneDrive\Documents\mlm\market_liquidity_monitor
+plugins: anyio-4.11.0, Faker-40.1.0, hypothesis-6.148.4, langsmith-0.5.1, logfire-4.16.0, asyncio-1.3.0, cov-7.0.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 3 items
+
+tests/test_fastapi_standards.py::test_lifespan_preloads_markets FAILED   [ 33%]
+tests/test_fastapi_standards.py::test_orderbook_yield_dependency_and_background_task FAILED [ 66%]
+tests/test_fastapi_standards.py::test_analyze_background_task FAILED     [100%]
+
+================================== FAILURES ===================================
+_______________________ test_lifespan_preloads_markets ________________________
+
+    @pytest.mark.asyncio
+    async def test_lifespan_preloads_markets():
+        """Verify that the lifespan event pre-loads markets for priority exchanges."""
+        # We must patch where it's USED, which is api.main
+        with patch('api.main.exchange_manager.preload_exchange', AsyncMock()) as mock_preload:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                await ac.get("/api/v1/health")
+>               assert mock_preload.call_count >= 3
+E               AssertionError: assert 0 >= 3
+E                +  where 0 = <AsyncMock id='2169155343360'>.call_count
+
+tests\test_fastapi_standards.py:15: AssertionError
+_____________ test_orderbook_yield_dependency_and_background_task _____________
+
+    @pytest.mark.asyncio
+    async def test_orderbook_yield_dependency_and_background_task():
+        """Verify that get_orderbook uses yield dependency and triggers background snapshot."""
+        # Mock capture_snapshot on the global tracker instance
+        with patch('data_engine.historical.historical_tracker.capture_snapshot', AsyncMock()) as mock_capture:
+            # Mock ExchangeClient.fetch_order_book to avoid real network calls
+            with patch('api.dependencies.exchange_manager.get_client', AsyncMock()) as mock_get_client:
+                mock_client = AsyncMock()
+                # Set up as an async context manager
+                mock_client.__aenter__.return_value = mock_client
+                mock_client.fetch_order_book.return_value = AsyncMock()
+                mock_get_client.return_value = mock_client
+    
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                    response = await ac.get("/api/v1/orderbook/BTC/USDT?exchange=binance")
+    
+>                   assert response.status_code == 200
+E                   assert 404 == 200
+E                    +  where 404 = <Response [404 Not Found]>.status_code
+
+tests\test_fastapi_standards.py:38: AssertionError
+________________________ test_analyze_background_task _________________________
+
+    @pytest.mark.asyncio
+    async def test_analyze_background_task():
+        """Verify that /analyze triggers background snapshot when symbol/exchange are provided."""
+        with patch('data_engine.historical.historical_tracker.capture_snapshot', AsyncMock()) as mock_capture:
+            with patch('api.routes.MarketAnalyzer.analyze_liquidity', AsyncMock()) as mock_analyze:
+                mock_analyze.return_value = AsyncMock()
+    
+                async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                    payload = {
+                        "query": "Analysis for SOL",
+                        "symbol": "SOL/USDT",
+                        "exchange": "binance"
+                    }
+>                   response = await ac.post("/api/v1/analyze", json=payload)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\test_fastapi_standards.py:56: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_client.py:1859: in post
+    return await self.request(
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_client.py:1629: in send
+    response = await self._send_handling_auth(
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\httpx\_transports\asgi.py:170: in handle_async_request
+    await self.app(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\fastapi\applications.py:1135: in __call__
+    await super().__call__(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\applications.py:107: in __call__
+    await self.middleware_stack(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\middleware\errors.py:186: in __call__
+    raise exc
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\middleware\errors.py:164: in __call__
+    await self.app(scope, receive, _send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\middleware\cors.py:85: in __call__
+    await self.app(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\middleware\exceptions.py:63: in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\_exception_handler.py:53: in wrapped_app
+    raise exc
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\fastapi\middleware\asyncexitstack.py:18: in __call__
+    await self.app(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\routing.py:716: in __call__
+    await self.middleware_stack(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\routing.py:736: in app
+    await route.handle(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\routing.py:290: in handle
+    await self.app(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\fastapi\routing.py:115: in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\_exception_handler.py:53: in wrapped_app
+    raise exc
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\starlette\_exception_handler.py:42: in wrapped_app
+    await app(scope, receive, sender)
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\fastapi\routing.py:101: in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\fastapi\routing.py:377: in app
+    content = await serialize_response(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+    async def serialize_response(
+        *,
+        field: Optional[ModelField] = None,
+        response_content: Any,
+        include: Optional[IncEx] = None,
+        exclude: Optional[IncEx] = None,
+        by_alias: bool = True,
+        exclude_unset: bool = False,
+        exclude_defaults: bool = False,
+        exclude_none: bool = False,
+        is_coroutine: bool = True,
+        endpoint_ctx: Optional[EndpointContext] = None,
+    ) -> Any:
+        if field:
+            errors = []
+            if is_coroutine:
+                value, errors_ = field.validate(response_content, {}, loc=("response",))
+            else:
+                value, errors_ = await run_in_threadpool(
+                    field.validate, response_content, {}, loc=("response",)
+                )
+            if isinstance(errors_, list):
+                errors.extend(errors_)
+            if errors:
+                ctx = endpoint_ctx or EndpointContext()
+>               raise ResponseValidationError(
+                    errors=errors,
+                    body=response_content,
+                    endpoint_ctx=ctx,
+                )
+E               fastapi.exceptions.ResponseValidationError: 9 validation errors:
+E                 {'type': 'string_type', 'loc': ('response', 'symbol'), 'msg': 'Input should be a valid string', 'input': <AsyncMock name='mock().symbol' id='2169155347728'>}
+E                 {'type': 'string_type', 'loc': ('response', 'exchange'), 'msg': 'Input should be a valid string', 'input': <AsyncMock name='mock().exchange' id='2169155345376'>}
+E                 {'type': 'missing', 'loc': ('response', 'liquidity_1pct', 0), 'msg': 'Field required', 'input': <AsyncMock name='mock().liquidity_1pct' id='2169159520944'>}
+E                 {'type': 'missing', 'loc': ('response', 'liquidity_1pct', 1), 'msg': 'Field required', 'input': <AsyncMock name='mock().liquidity_1pct' id='2169159520944'>}
+E                 {'type': 'missing', 'loc': ('response', 'liquidity_2pct', 0), 'msg': 'Field required', 'input': <AsyncMock name='mock().liquidity_2pct' id='2169159521952'>}
+E                 {'type': 'missing', 'loc': ('response', 'liquidity_2pct', 1), 'msg': 'Field required', 'input': <AsyncMock name='mock().liquidity_2pct' id='2169159521952'>}
+E                 {'type': 'string_type', 'loc': ('response', 'volatility_rating'), 'msg': 'Input should be a valid string', 'input': <AsyncMock name='mock().volatility_rating' id='2169159524976'>}
+E                 {'type': 'string_type', 'loc': ('response', 'liquidity_score'), 'msg': 'Input should be a valid string', 'input': <AsyncMock name='mock().liquidity_score' id='2169159525648'>}
+E                 {'type': 'string_type', 'loc': ('response', 'reasoning'), 'msg': 'Input should be a valid string', 'input': <AsyncMock name='mock().reasoning' id='2169159526320'>}
+E               
+E                 File "C:\Users\click\OneDrive\Documents\mlm\market_liquidity_monitor\api\routes.py", line 87, in analyze_liquidity
+E                   POST /api/v1/analyze
+
+..\..\..\..\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\fastapi\routing.py:215: ResponseValidationError
+=========================== short test summary info ===========================
+FAILED tests/test_fastapi_standards.py::test_lifespan_preloads_markets - Asse...
+FAILED tests/test_fastapi_standards.py::test_orderbook_yield_dependency_and_background_task
+FAILED tests/test_fastapi_standards.py::test_analyze_background_task - fastap...
+============================== 3 failed in 7.84s ==============================

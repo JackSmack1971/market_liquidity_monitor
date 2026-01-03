@@ -12,8 +12,9 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 from .models import HistoricalSnapshot, OrderBook, LiquidityAlert
-from . import exchange_manager
-from .database import db_manager
+from data_engine.exchange import exchange_manager, ExchangeClient
+from data_engine.models import OrderBook, HistoricalSnapshot
+from data_engine.database import db_manager
 
 
 class HistoricalTracker:

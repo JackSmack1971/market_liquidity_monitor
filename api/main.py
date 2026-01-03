@@ -7,11 +7,12 @@ Configures the API server with CORS, routes, and lifecycle management.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
 
-from ..config import settings
-from ..data_engine import exchange_manager, cache_manager
-from ..data_engine.database import db_manager
-from .routes import router
+from config import settings
+from data_engine import exchange_manager, cache_manager
+from data_engine.database import db_manager
+from api.routes import router
 
 
 @asynccontextmanager
@@ -23,12 +24,20 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     print("Starting Market Liquidity Monitor API...")
-    print(f"Default exchange: {settings.default_exchange}")
-    print(f"LLM model: {settings.default_model}")
+    print(f"Default exchange: {getattr(settings, 'default_exchange', 'binance')}")
+    print(f"LLM model: {getattr(settings, 'default_model', 'gpt-4o')}")
 
     # Connect to cache and database
     await cache_manager.connect()
     await db_manager.connect()
+
+    # Pre-load markets for priority exchanges
+    priority_exchanges = ["binance", "coinbase", "kraken"]
+    print(f"Pre-loading markets for: {', '.join(priority_exchanges)}...")
+    await asyncio.gather(
+        *[exchange_manager.preload_exchange(ex) for ex in priority_exchanges],
+        return_exceptions=True
+    )
 
     yield
 
@@ -51,7 +60,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
+    allow_origins=getattr(settings, 'cors_origins', ["*"]),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,8 +84,8 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(
-        "market_liquidity_monitor.api.main:app",
-        host=settings.api_host,
-        port=settings.api_port,
-        reload=settings.api_reload,
+        "api.main:app",
+        host=getattr(settings, 'api_host', "0.0.0.0"),
+        port=getattr(settings, 'api_port', 8000),
+        reload=getattr(settings, 'api_reload', False),
     )
