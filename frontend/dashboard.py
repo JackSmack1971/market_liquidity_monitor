@@ -70,7 +70,7 @@ async def run_analysis_enhanced(prompt: str, symbol: str, exchange: str, status,
         final_result = await stream_result.get_data()
         usage = stream_result.usage()
     
-    return final_result, usage
+    yield (final_result, usage)
 from market_liquidity_monitor.frontend.advanced_visualizations import (
     create_liquidity_heatmap,
     create_exchange_comparison_chart,
@@ -592,6 +592,147 @@ def main():
                                     
                                     if report.warning:
                                         st.error(f"🚨 **Execution Warning:** {report.warning}")
+                                
+                                # Cross-Exchange Comparison Visualization
+                                if hasattr(final_result, 'venue_analyses') and final_result.venue_analyses:
+                                    st.markdown("---")
+                                    st.subheader("🔄 Multi-Exchange Liquidity Comparison")
+                                    
+                                    # Arbitrage Alert
+                                    if final_result.arbitrage_opportunity:
+                                        st.success(
+                                            f"💰 **ARBITRAGE OPPORTUNITY DETECTED!** "
+                                            f"Potential profit: {final_result.potential_profit_pct:.2f}% (fee-adjusted)"
+                                        )
+                                    
+                                    # Routing Recommendation
+                                    st.info(f"📍 **Recommended Venue:** {final_result.recommended_venue}")
+                                    st.caption(final_result.comparison_summary)
+                                    
+                                    # Venue Comparison Table
+                                    st.markdown("#### Venue Analysis")
+                                    
+                                    # Filter eligible venues
+                                    eligible = [v for v in final_result.venue_analyses if v.is_eligible]
+                                    ineligible = [v for v in final_result.venue_analyses if not v.is_eligible]
+                                    
+                                    if eligible:
+                                        # Create columns for side-by-side comparison
+                                        cols = st.columns(len(eligible))
+                                        
+                                        for idx, venue in enumerate(eligible):
+                                            with cols[idx]:
+                                                # Highlight recommended venue
+                                                is_recommended = venue.exchange_id == final_result.recommended_venue
+                                                border_color = "green" if is_recommended else "gray"
+                                                
+                                                with st.container(border=True):
+                                                    if is_recommended:
+                                                        st.markdown("**✅ RECOMMENDED**")
+                                                    st.markdown(f"### {venue.exchange_id.upper()}")
+                                                    
+                                                    st.metric(
+                                                        "Fill Price (VWAP)",
+                                                        f"${venue.fill_price:,.4f}",
+                                                        delta=f"{venue.slippage_bps:.2f} bps",
+                                                        delta_color="inverse"
+                                                    )
+                                                    
+                                                    st.caption(f"Taker Fee: {venue.taker_fee_pct:.2f}%")
+                                                    st.caption(f"Circuit: {venue.circuit_state}")
+                                                    
+                                                    if venue.execution_warnings:
+                                                        for warning in venue.execution_warnings:
+                                                            st.warning(warning, icon="⚠️")
+                                    
+                                    # Show ineligible venues
+                                    if ineligible:
+                                        with st.expander(f"❌ Ineligible Venues ({len(ineligible)})"):
+                                            for venue in ineligible:
+                                                st.markdown(f"**{venue.exchange_id.upper()}**: {', '.join(venue.execution_warnings)}")
+                                
+                                # Historical Backtest Visualization
+                                if hasattr(final_result, 'total_candles') and final_result.total_candles:
+                                    st.markdown("---")
+                                    st.subheader("⏰ Historical Backtest Results")
+                                    
+                                    # Summary info
+                                    st.caption(
+                                        f"Analyzed {final_result.total_candles} candles from "
+                                        f"{final_result.start_date.strftime('%Y-%m-%d %H:%M')} to "
+                                        f"{final_result.end_date.strftime('%Y-%m-%d %H:%M')} "
+                                        f"({final_result.timeframe} timeframe)"
+                                    )
+                                    
+                                    # Metric Cards
+                                    bc1, bc2, bc3, bc4 = st.columns(4)
+                                    
+                                    bc1.metric(
+                                        "Avg Slippage",
+                                        f"{final_result.avg_slippage_bps:.2f} bps",
+                                        help="Average slippage across all simulated executions"
+                                    )
+                                    
+                                    bc2.metric(
+                                        "Max Slippage",
+                                        f"{final_result.max_slippage_bps:.2f} bps",
+                                        delta=f"+{final_result.max_slippage_bps - final_result.avg_slippage_bps:.2f}",
+                                        delta_color="inverse",
+                                        help="Worst slippage encountered during backtest"
+                                    )
+                                    
+                                    bc3.metric(
+                                        "High Risk Periods",
+                                        f"{final_result.high_risk_periods}",
+                                        help="Number of candles with >200 bps slippage"
+                                    )
+                                    
+                                    bc4.metric(
+                                        "Optimal Windows",
+                                        f"{final_result.optimal_execution_windows}",
+                                        help="Number of candles with <50 bps slippage"
+                                    )
+                                    
+                                    # Volatility Profile
+                                    st.markdown("#### Volatility Profile")
+                                    vp1, vp2, vp3 = st.columns(3)
+                                    
+                                    vp1.metric(
+                                        "Avg Spread",
+                                        f"{final_result.volatility_profile.get('avg_spread_bps', 0):.2f} bps"
+                                    )
+                                    vp2.metric(
+                                        "Max Spread",
+                                        f"{final_result.volatility_profile.get('max_spread_bps', 0):.2f} bps"
+                                    )
+                                    vp3.metric(
+                                        "Avg Volatility",
+                                        f"{final_result.volatility_profile.get('avg_volatility_percentile', 0):.1f}%"
+                                    )
+                                    
+                                    # Execution Warnings
+                                    if final_result.execution_warnings:
+                                        with st.expander(f"⚠️ Execution Warnings ({len(final_result.execution_warnings)})"):
+                                            for warning in final_result.execution_warnings:
+                                                st.warning(warning, icon="⚠️")
+                                    
+                                    # Summary Analysis
+                                    st.markdown("#### Backtest Summary")
+                                    
+                                    risk_pct = (final_result.high_risk_periods / final_result.total_candles * 100) if final_result.total_candles > 0 else 0
+                                    optimal_pct = (final_result.optimal_execution_windows / final_result.total_candles * 100) if final_result.total_candles > 0 else 0
+                                    
+                                    summary_text = f"""
+                                    During the analyzed period, your {final_result.side.upper()} order of {final_result.order_size:.2f} {final_result.symbol.split('/')[0]} 
+                                    would have experienced an average slippage of **{final_result.avg_slippage_bps:.2f} bps**.
+                                    
+                                    - **{risk_pct:.1f}%** of the period had high execution risk (>200 bps slippage)
+                                    - **{optimal_pct:.1f}%** of the period offered optimal execution conditions (<50 bps slippage)
+                                    - Average fill price: **${final_result.avg_fill_price:,.4f}**
+                                    """
+                                    
+                                    st.markdown(summary_text)
+
 
 
                             response = final_result.summary_analysis

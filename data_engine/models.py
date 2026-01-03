@@ -181,6 +181,78 @@ class MarketImpactReport(BaseModel):
     
     warning: Optional[str] = Field(None, description="Warning if order exceeds available book depth")
 
+class VenueAnalysis(BaseModel):
+    """
+    Analysis of liquidity and execution quality for a single exchange venue.
+    """
+    exchange_id: str = Field(..., description="Exchange identifier (e.g., 'binance', 'kraken')")
+    fill_price: float = Field(..., description="Expected fill price (VWAP) with exchange precision applied")
+    slippage_bps: float = Field(..., description="Slippage in basis points")
+    execution_warnings: List[str] = Field(default_factory=list, description="Execution risks or limit violations")
+    circuit_state: str = Field(..., description="Circuit breaker state (CLOSED/OPEN/HALF_OPEN)")
+    is_eligible: bool = Field(..., description="Whether venue can handle the order size")
+    taker_fee_pct: float = Field(default=0.1, description="Taker fee percentage (e.g., 0.1 for 0.1%)")
+
+class CrossExchangeComparison(BaseModel):
+    """
+    Comprehensive comparison of liquidity across multiple exchanges.
+    """
+    symbol: str = Field(..., description="Trading pair analyzed")
+    order_size: float = Field(..., description="Simulated order size in base currency")
+    side: str = Field(..., description="Order side (buy or sell)")
+    
+    recommended_venue: str = Field(..., description="Optimal exchange for execution based on lowest slippage")
+    
+    arbitrage_opportunity: bool = Field(default=False, description="Whether cross-exchange arbitrage is possible")
+    potential_profit_pct: Optional[float] = Field(None, description="Estimated arbitrage profit percentage (fee-adjusted)")
+    
+    venue_analyses: List[VenueAnalysis] = Field(..., description="Detailed analysis for each venue")
+    comparison_summary: str = Field(..., description="Executive summary of routing recommendation")
+
+
+class SyntheticOrderBook(BaseModel):
+    """
+    Reconstructed order book from historical OHLCV data.
+    """
+    timestamp: datetime = Field(..., description="Candle timestamp")
+    symbol: str = Field(..., description="Trading pair")
+    mid_price: float = Field(..., description="Mid price (close of candle)")
+    estimated_spread_bps: float = Field(..., description="Estimated spread in basis points based on volatility")
+    volatility_percentile: float = Field(..., description="Volatility percentile (0-100)")
+    synthetic_depth_levels: int = Field(default=10, description="Number of synthetic depth levels generated")
+    high: float = Field(..., description="Candle high")
+    low: float = Field(..., description="Candle low")
+    volume: float = Field(..., description="Candle volume")
+
+class BacktestReport(BaseModel):
+    """
+    Comprehensive report of historical execution simulation.
+    """
+    symbol: str = Field(..., description="Trading pair analyzed")
+    exchange: str = Field(..., description="Exchange used for backtest")
+    timeframe: str = Field(..., description="Candle timeframe (e.g., '1h', '4h', '1d')")
+    start_date: datetime = Field(..., description="Backtest start timestamp")
+    end_date: datetime = Field(..., description="Backtest end timestamp")
+    
+    order_size: float = Field(..., description="Simulated order size in base currency")
+    side: str = Field(..., description="Order side (buy or sell)")
+    
+    total_candles: int = Field(..., description="Number of candles analyzed")
+    avg_slippage_bps: float = Field(..., description="Average slippage across all candles")
+    max_slippage_bps: float = Field(..., description="Maximum slippage encountered")
+    min_slippage_bps: float = Field(..., description="Minimum slippage encountered")
+    
+    avg_fill_price: float = Field(..., description="Average fill price across backtest")
+    theoretical_total_cost: float = Field(..., description="Total cost if all orders executed")
+    
+    execution_warnings: List[str] = Field(default_factory=list, description="Warnings from simulation")
+    volatility_profile: Dict[str, float] = Field(default_factory=dict, description="Volatility statistics")
+    
+    high_risk_periods: int = Field(default=0, description="Number of candles with >200 bps slippage")
+    optimal_execution_windows: int = Field(default=0, description="Number of candles with <50 bps slippage")
+
+
+
 
 class HistoricalLiquidityTrend(BaseModel):
     """
