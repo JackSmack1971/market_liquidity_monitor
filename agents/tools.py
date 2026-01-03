@@ -20,10 +20,26 @@ async def get_order_book_depth(
 
     Use this tool when you need to analyze the current supply (asks) and demand (bids). 
     It is essential for calculating spreads, market depth, and identifying buy/sell walls.
-    If the ticker symbol is ambiguous, use search_trading_pairs first to find the exact symbol format (e.g., 'BTC/USDT').
+    
+    TELEMETRY AWARENESS:
+    - This tool returns `latency_ms` (network delay) and `circuit_state` (venue health).
+    - If `circuit_state` is 'OPEN', data may be stale or recovery mode is active.
     """
     try:
         client = await exchange_manager.get_client(exchange)
+        
+        # 1. Standardized Health Check
+        if client.circuit_breaker.state == "OPEN":
+            # Tag the current span for APM visibility
+            logfire.error("circuit_breaker_retry", 
+                          exchange=exchange, 
+                          circuit_state="OPEN", 
+                          symbol=symbol)
+            raise ModelRetry(
+                f"Exchange '{exchange}' is currently suspended due to health issues (Circuit OPEN). "
+                f"Please attempt this analysis on a different venue (e.g., 'coinbase' or 'kraken')."
+            )
+
         orderbook = await client.fetch_order_book(symbol, limit=levels)
         return orderbook
     except ValueError as e:
@@ -86,6 +102,8 @@ async def get_market_metadata(
             "active": info.get("active"),
             "precision": info.get("precision"),
             "limits": info.get("limits"),
+            "circuit_state": client.circuit_breaker.state,
+            "latency_ms": getattr(client, 'last_request_latency_ms', None)
         }
     except ValueError:
         raise ModelRetry(f"Symbol '{symbol}' not found. Use 'search_trading_pairs' to verify.")
@@ -243,99 +261,16 @@ async def compare_exchanges(
                 "spread_pct": ob.spread_percentage,
                 "bid_depth": ob.get_cumulative_volume("bids", 10),
                 "ask_depth": ob.get_cumulative_volume("asks", 10),
+                "latency_ms": ob.latency_ms,
+                "circuit_state": ob.circuit_state,
+                "taker_fee_pct": getattr(ob, 'taker_fee_pct', 0.1)
             }
             for ex, ob in successful_books
         ]
     }
 
 
-async def calculate_market_impact(
-    ctx: RunContext[Any],
-    symbol: Annotated[str, Field(description="Target trading pair symbol")],
-    order_size_usd: Annotated[float, Field(description="Simulated order size in USD")],
-    side: Annotated[str, Field(description="Trade direction ('buy' or 'sell')")] = "buy",
-    exchange: Annotated[str, Field(description="Exchange to simulate on")] = "binance",
-) -> dict:
-    """
-    Simulate execution of a specific order size to determine slippage and price impact.
 
-    Use this tool to answer questions like 'How much slippage for a $10k trade?' or 'Can I buy 5 BTC without moving the price?'.
-    It validates your order against exchange limits (amount and cost) and walks through the actual limit orders in the book to provide a realistic execution estimate.
-    If the order is too small for the exchange, This tool will provide feedback via a retry request.
-    """
-    try:
-        client = await exchange_manager.get_client(exchange)
-        orderbook = await client.fetch_order_book(symbol, limit=100)
-    except Exception:
-        raise ModelRetry(f"Failed to fetch order book for '{symbol}' on '{exchange}'. Please verify parameters.")
-
-    # Determine which side of the book to use
-    levels = orderbook.asks if side == "buy" else orderbook.bids
-    best_price = orderbook.best_ask.price if side == "buy" else orderbook.best_bid.price
-
-    if not levels or not best_price:
-        raise ModelRetry(f"Insufficient liquidity data to simulate {side} order for {symbol} on {exchange}.")
-
-    # Validate order limits before simulation
-    # Convert USD size to base amount for validation
-    approx_amount = order_size_usd / best_price
-    
-    # Enforce precision
-    precise_amount_str = client.amount_to_precision(symbol, approx_amount)
-    precise_amount = float(precise_amount_str)
-    
-    is_valid, error_msg = client.validate_order_limits(symbol, precise_amount, best_price)
-    if not is_valid:
-        raise ModelRetry(
-            f"The proposed order does not meet {exchange} requirements: {error_msg}. "
-            "Please adjust the order size or try a more liquid pair."
-        )
-
-    # Simulate order execution
-    remaining_usd = order_size_usd
-    total_base_amount = 0.0
-    total_usd_spent = 0.0
-    levels_consumed = 0
-
-    for level in levels:
-        if remaining_usd <= 0:
-            break
-
-        level_value_usd = level.price * level.amount
-        consumed_usd = min(remaining_usd, level_value_usd)
-        consumed_base = consumed_usd / level.price
-
-        total_base_amount += consumed_base
-        total_usd_spent += consumed_usd
-        remaining_usd -= consumed_usd
-        levels_consumed += 1
-
-    if remaining_usd > 0:
-        return {
-            "error": "Insufficient liquidity",
-            "available_liquidity_usd": total_usd_spent,
-            "requested_usd": order_size_usd,
-            "sufficient_liquidity": False
-        }
-
-    # Calculate metrics
-    average_price = total_usd_spent / total_base_amount if total_base_amount > 0 else 0
-    slippage_pct = ((average_price - best_price) / best_price) * 100
-    price_impact_pct = abs(slippage_pct)
-
-    return {
-        "symbol": symbol,
-        "exchange": exchange,
-        "order_size_usd": order_size_usd,
-        "side": side,
-        "best_price": best_price,
-        "average_execution_price": average_price,
-        "slippage_percentage": slippage_pct,
-        "price_impact_percentage": price_impact_pct,
-        "levels_consumed": levels_consumed,
-        "total_base_amount": total_base_amount,
-        "sufficient_liquidity": True,
-    }
 
 
 async def get_historical_metrics(
@@ -432,14 +367,12 @@ async def calculate_market_impact(
     It 'walks the order book' to determine the Volume Weighted Average Price (VWAP) 
     and compares it to the mid-price.
     
-    CRITICAL: This tool validates the order against exchange-specific limits (min/max amount, min cost)
-    and triggers HIGH/MEDIUM severity warnings if slippage exceeds safe thresholds.
+    TELEMETRY AWARENESS:
+    - Analyzes `latency_ms` and `circuit_state` during simulation.
+    - Triggers CRITICAL risk warnings if `slippage_bps` > 200 bps.
     
-    Returns:
-    - Expected Fill Price (VWAP)
-    - Slippage in Basis Points (bps)
-    - Critical depth levels
-    - Execution warnings (if any)
+    CRITICAL: This tool validates the order against exchange-specific limits (min/max amount, min cost)
+    and enforces precision using `exchange.amount_to_precision()`.
     """
     try:
         # 1. Get exchange client
@@ -447,6 +380,10 @@ async def calculate_market_impact(
         
         # 2. Circuit Breaker Health Check
         if client.circuit_breaker.state == "OPEN":
+            logfire.error("circuit_breaker_retry", 
+                          exchange=exchange, 
+                          circuit_state="OPEN", 
+                          symbol=symbol)
             raise ModelRetry(
                 f"Exchange '{exchange}' is currently unavailable (circuit breaker OPEN). "
                 f"Please try again in a few moments or use a different exchange."
@@ -464,7 +401,20 @@ async def calculate_market_impact(
             # If market info unavailable, proceed without limits validation
             pass
         
-        # 3. Fetch deep order book
+        # 3. Precision Enforcement
+        # Ensure the size meets exchange precision before simulation
+        try:
+            precise_size_str = client.exchange.amount_to_precision(symbol, size)
+            precise_size = float(precise_size_str)
+            if precise_size != size:
+                logfire.info("size_precision_adjusted", original=size, adjusted=precise_size)
+            size = precise_size
+        except Exception as e:
+            # If precision tool fails, proceed with raw size but log it
+            logfire.warn("precision_adjustment_failed", error=str(e))
+            pass
+
+        # 4. Fetch deep order book
         # Standard fetch is 20. Use 50 for impact to ensure depth coverage.
         limit = 50
         orderbook = await client.fetch_order_book(symbol, limit=limit)
@@ -645,13 +595,7 @@ async def run_historical_backtest(
             raise ModelRetry(f"Historical backtest failed: {str(e)}")
 
 
-async def get_historical_metrics(
-    ctx: RunContext[Any],
-    symbol: Annotated[str, Field(description="Trading pair")],
-    exchange: Annotated[str, Field(description="Exchange")] = "binance",
-) -> dict:
-    """Placeholder for historical metrics tool."""
-    return {"status": "not_implemented"}
+
 
 
 

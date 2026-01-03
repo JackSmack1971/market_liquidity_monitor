@@ -30,6 +30,9 @@ class OrderBook(BaseModel):
 
     bids: List[OrderBookLevel] = Field(..., description="Buy orders (descending price)")
     asks: List[OrderBookLevel] = Field(..., description="Sell orders (ascending price)")
+    latency_ms: Optional[float] = Field(None, description="Request latency in milliseconds")
+    circuit_state: str = Field("CLOSED", description="Circuit breaker state (CLOSED/OPEN/HALF_OPEN)")
+    taker_fee_pct: float = Field(default=0.1, description="Venue taker fee (e.g. 0.1 for 0.1%)")
 
     @property
     def best_bid(self) -> Optional[OrderBookLevel]:
@@ -142,6 +145,20 @@ class LiquidityScorecard(BaseModel):
         description="Expected slippage for a standard $10k market order"
     )
     
+    latency_ms: Optional[float] = Field(None, description="Detection latency in milliseconds")
+    circuit_state: str = Field("CLOSED", description="Health status of the analyzed venue (CLOSED/OPEN/HALF_OPEN)")
+    
+    confidence_score: float = Field(
+        ..., 
+        ge=0.0, 
+        le=1.0, 
+        description="Agent's confidence in this analysis (0.0-1.0). Lower if latency is high or data is stale."
+    )
+    system_health_status: str = Field(
+        ..., 
+        description="Overall health assessment (e.g., 'HEALTHY', 'DEGRADED', 'CRITICAL')"
+    )
+    
     recommended_max_size: str = Field(
         ..., 
         description="Recommended maximum order size to avoid significant impact (e.g., '$50,000')"
@@ -176,6 +193,7 @@ class MarketImpactReport(BaseModel):
     
     slippage_bps: float = Field(..., description="Slippage in basis points (1 bp = 0.01%)")
     price_impact_percent: float = Field(..., description="Price impact as percentage")
+    latency_ms: Optional[float] = Field(None, description="Request latency in milliseconds")
     
     critical_depth_level: Optional[float] = Field(None, description="Price level reached to fill order")
     

@@ -8,7 +8,7 @@ import pytest
 import asyncio
 from unittest.mock import Mock, AsyncMock, patch
 
-from market_liquidity_monitor.data_engine import ExchangeClient, OrderBook
+from data_engine import ExchangeClient, OrderBook
 
 
 @pytest.mark.asyncio
@@ -32,8 +32,10 @@ async def test_fetch_order_book_structure():
 
     with patch.object(client.exchange, 'fetch_order_book', new_callable=AsyncMock) as mock_fetch:
         mock_fetch.return_value = mock_orderbook
+        # Mock ensure_markets_loaded to avoid real network call
+        with patch.object(client, 'ensure_markets_loaded', new_callable=AsyncMock):
+            orderbook = await client.fetch_order_book("BTC/USDT", limit=10)
 
-        orderbook = await client.fetch_order_book("BTC/USDT", limit=10)
 
         # Verify structure
         assert isinstance(orderbook, OrderBook)
@@ -55,7 +57,7 @@ async def test_fetch_order_book_structure():
 @pytest.mark.asyncio
 async def test_orderbook_metrics():
     """Test order book metric calculations."""
-    from market_liquidity_monitor.data_engine.models import OrderBookLevel
+    from data_engine.models import OrderBookLevel
 
     # Create test order book
     orderbook = OrderBook(
@@ -86,7 +88,7 @@ async def test_orderbook_metrics():
 
     # Test liquidity at percentage
     volume, value = orderbook.get_liquidity_at_percentage("bids", 2.0)
-    assert volume == 30.0  # Within 2% of 100.0
+    assert volume == 60.0  # Within 2% of 100.0 (100, 99, 98)
 
 
 @pytest.mark.asyncio
@@ -94,6 +96,9 @@ async def test_context_manager():
     """Test exchange client works as async context manager."""
     async with ExchangeClient(exchange_id="binance") as client:
         assert client.exchange_id == "binance"
+        # Mock ensure_markets_loaded to avoid network on context entry if any logic triggers it
+        with patch.object(client, 'ensure_markets_loaded', new_callable=AsyncMock):
+            pass
 
     # Client should be closed after exiting context
 

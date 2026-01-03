@@ -7,6 +7,19 @@ from functools import wraps
 from data_engine.models import OrderBook, OrderBookLevel
 from data_engine.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config.settings import settings
+import logfire
+
+# Initialize Performance Metrics
+REQUEST_LATENCY_HISTOGRAM = logfire.metric_histogram(
+    "exchange_request_duration_seconds",
+    unit="s",
+    description="Duration of requests to cryptocurrency exchanges"
+)
+RATE_LIMIT_WEIGHT_GAUGE = logfire.metric_gauge(
+    "exchange_rate_limit_used_weight",
+    unit="weight",
+    description="Current used rate limit weight (e.g., Binance x-mbx-used-weight-1m)"
+)
 
 
 def with_retry(retries: int = 3, backoff: float = 1.0):
@@ -33,7 +46,11 @@ def with_retry(retries: int = 3, backoff: float = 1.0):
                     print(f"Network error on {self.exchange_id}, retrying in {delay}s... ({e})")
                     await asyncio.sleep(delay)
                 except Exception as e:
-                    # Don't retry on other errors
+                    # Record exception for observability with full context
+                    if settings.logfire_token:
+                        logfire.error("Exchange request failed on {exchange}: {error}", 
+                                      exchange=self.exchange_id, error=str(e), _exc_info=e)
+                    # Don't retry on other structural errors
                     raise e
             raise last_error
         return wrapper
@@ -69,6 +86,7 @@ class ExchangeClient:
         self.api_key = api_key or settings.exchange_api_key
         self.api_secret = api_secret or settings.exchange_api_secret
         self._markets_loaded = False
+        self.last_request_latency_ms: Optional[float] = None
 
         # Initialize exchange instance
         exchange_class = getattr(ccxt, self.exchange_id)
@@ -143,14 +161,42 @@ class ExchangeClient:
         Returns:
             OrderBook object with structured bid/ask data
         """
-        await self.ensure_markets_loaded()
-        
-        # Fetch with Circuit Breaker
-        raw_orderbook = await self.circuit_breaker.call(
-            self.exchange.fetch_order_book, 
-            symbol, 
-            limit
-        )
+        # Get taker fee (default 0.1% if not available)
+        taker_fee_pct = 0.1
+        try:
+            if hasattr(self.exchange, 'fees') and 'trading' in self.exchange.fees:
+                taker_fee_pct = self.exchange.fees['trading'].get('taker', 0.001) * 100
+            elif hasattr(self.exchange, 'markets') and symbol in self.exchange.markets:
+                taker_fee_pct = self.exchange.markets[symbol].get('taker', 0.001) * 100
+        except:
+            pass
+
+        with logfire.span("fetch_order_book:{symbol}@{exchange}", symbol=symbol, exchange=self.exchange_id) as span:
+            await self.ensure_markets_loaded()
+            
+            # Record latency with histogram
+            start_time = time.perf_counter()
+            try:
+                # Fetch with Circuit Breaker
+                raw_orderbook = await self.circuit_breaker.call(
+                    self.exchange.fetch_order_book, 
+                    symbol, 
+                    limit
+                )
+                duration = time.perf_counter() - start_time
+                latency_ms = duration * 1000
+                self.last_request_latency_ms = latency_ms
+                if settings.logfire_token:
+                    REQUEST_LATENCY_HISTOGRAM.record(duration, {"exchange": self.exchange_id, "operation": "fetch_order_book"})
+                    
+                    # 4. Monitor Binance Rate Limits (if applicable)
+                    if self.exchange_id == "binance" and hasattr(self.exchange, 'last_response_headers'):
+                        weight = self.exchange.last_response_headers.get('x-mbx-used-weight-1m')
+                        if weight:
+                            RATE_LIMIT_WEIGHT_GAUGE.set(float(weight), {"exchange": self.exchange_id})
+            except Exception as e:
+                span.record_exception(e)
+                raise
 
         # Convert to our structured format
         bids = [
@@ -168,6 +214,9 @@ class ExchangeClient:
             exchange=self.exchange_id,
             bids=bids,
             asks=asks,
+            latency_ms=latency_ms if 'latency_ms' in locals() else None,
+            circuit_state=self.circuit_breaker.state,
+            taker_fee_pct=taker_fee_pct
         )
 
     @with_retry()
@@ -212,14 +261,24 @@ class ExchangeClient:
         if cached_data:
             return cached_data
 
-        # Fetch with Circuit Breaker
-        data = await self.circuit_breaker.call(
-            self.exchange.fetch_ohlcv, 
-            symbol, 
-            timeframe, 
-            since, 
-            limit
-        )
+        with logfire.span("fetch_ohlcv:{symbol}@{exchange}", symbol=symbol, exchange=self.exchange_id, timeframe=timeframe) as span:
+            # Record latency with histogram
+            start_time = time.perf_counter()
+            try:
+                # Fetch with Circuit Breaker
+                data = await self.circuit_breaker.call(
+                    self.exchange.fetch_ohlcv, 
+                    symbol, 
+                    timeframe, 
+                    since, 
+                    limit
+                )
+                duration = time.perf_counter() - start_time
+                if settings.logfire_token:
+                    REQUEST_LATENCY_HISTOGRAM.record(duration, {"exchange": self.exchange_id, "operation": "fetch_ohlcv"})
+            except Exception as e:
+                span.record_exception(e)
+                raise
         
         # Set Cache (5 min TTL)
         await cache_manager.set(cache_key, data, ttl=300)

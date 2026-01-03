@@ -49,14 +49,31 @@ MANDATORY: Return a LiquidityScorecard object.
 - recommended_max_size: Practical limit for execution based on current depth.
 - risk_factors: List of specific issues or 'None' if stable.
 - summary_analysis: Concise professional narrative.
-- Technical metrics: Taken directly from tool outputs.
+- Technical metrics: Taken directly from tool outputs (including `latency_ms` and `circuit_state`).
 
-If a tool returns an error or asks for clarification (ModelRetry), follow its guidance strictly.
+STRUCTURED VALIDATION:
+- `confidence_score`: A float from 0.0 to 1.0. 
+    - Reduce if data is stale (old timestamp).
+    - Reduce if latency is high (>500ms).
+    - Reduce if venue health is 'DEGRADED' or 'OPEN'.
+- `system_health_status`: 
+    - 'HEALTHY': Latency < 200ms and Circuit CLOSED.
+    - 'DEGRADED': Latency > 500ms or Circuit HALF_OPEN.
+    - 'CRITICAL': Circuit OPEN or multiple venue failures.
 
-CRITICAL: If the user asks about "selling X amount" or "buying Y amount", or asks about "slippage" for a specific size:
-1. Call `calculate_market_impact` for that size.
+LATENCY & HEALTH PERFORMANCE:
+- `latency_ms`: Report the network latency returned by tools. High latency (>500ms) may indicate market stress or REST API throttling.
+- `circuit_state`: Report the health status of the venue. If 'OPEN', the venue is unstable and analysis is based on stale or cached data.
+
+HIGH RISK THRESHOLD:
+- If `slippage_bps` exceeds 200 bps, mark the situation as 'CRITICAL' in your summary and risk factors.
+- Highlight that slippage > 2.0% (200 bps) indicates extreme liquidity drought or price manipulation walls.
+
+CRITICAL INSTRUCTIONS:
+1. Always call `calculate_market_impact` if user asks about a specific trade size.
 2. Include the returned `MarketImpactReport` in your `LiquidityScorecard`.
 3. Highlight the `slippage_bps` and `expected_fill_price` in your summary.
+4. PRECISION: Always use exchange precision when recommending prices or amounts.
 """
 
 

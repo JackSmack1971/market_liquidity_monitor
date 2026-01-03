@@ -24,15 +24,44 @@ async def lifespan(app: FastAPI):
 
     Handles startup and shutdown tasks.
     """
-    # Configure Logfire
+    # Configure Logfire with Advanced Production Standards
     if settings.logfire_token:
         logfire.configure(
             service_name=settings.logfire_service_name,
             token=settings.logfire_token,
-            environment=settings.logfire_environment
+            environment=settings.logfire_environment,
+            scrubbing=logfire.ScrubbingOptions(
+                extra_patterns=[
+                    r'api_?key', r'api_?secret', 
+                    r'EXCHANGE_API_KEY', r'EXCHANGE_API_SECRET',
+                    r'sk-or-v1-[a-zA-Z0-9]+'  # OpenRouter Key Pattern
+                ]
+            ),
+            console=logfire.ConsoleOptions(
+                min_log_level=getattr(settings, 'logfire_console_level', 'info')
+            )
         )
-        logfire.instrument_fastapi(app)
-        print("Logfire observability enabled.")
+        # Deep integration with Pydantic models for data validation tracing
+        logfire.instrument_pydantic()
+        
+        # Instrument HTTP clients for full network visibility (CCXT + LLM)
+        logfire.instrument_httpx()
+        logfire.instrument_aiohttp_client()
+        
+        # Explicitly instrument pydantic_ai for model reasoning tracing
+        logfire.instrument_pydantic_ai()
+        
+        # Enable auto-tracing for non-instrumented functions with minimal overhead
+        logfire.install_auto_tracing(
+            min_duration=getattr(settings, 'logfire_auto_trace_min_duration', 0.05)
+        )
+        
+        # Instrument FastAPI with sampling to manage demo account limits
+        logfire.instrument_fastapi(
+            app, 
+            trace_sample_rate=getattr(settings, 'logfire_trace_sample_rate', 1.0)
+        )
+        print("Logfire advanced observability initialized.")
     
     # Startup
     print("Starting Market Liquidity Monitor API...")

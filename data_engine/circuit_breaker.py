@@ -20,6 +20,18 @@ class CircuitBreakerOpen(Exception):
     """Raised when the circuit is open (failing)."""
     pass
 
+# Initialize Metric Counters for Health Tracking
+CB_TRIPS_COUNTER = logfire.metric_counter(
+    "circuit_breaker_trips_total", 
+    unit="1", 
+    description="Total number of times a circuit breaker has opened"
+)
+CB_FAILURE_COUNTER = logfire.metric_counter(
+    "circuit_breaker_failures_total",
+    unit="1",
+    description="Total number of individual failures recorded by circuit breakers"
+)
+
 class CircuitBreaker:
     """
     State machine for fault tolerance.
@@ -87,6 +99,7 @@ class CircuitBreaker:
             self._record_failure()
             logger.warning(f"Circuit '{self.name}' failure {self._failures}/{self.failure_threshold}: {e}")
             if settings.logfire_token:
+                CB_FAILURE_COUNTER.add(1, {"circuit": self.name, "error": type(e).__name__})
                 logfire.error(f"circuit_failure: {str(e)}", circuit=self.name, failures=self._failures)
             raise e
 
@@ -100,6 +113,7 @@ class CircuitBreaker:
                 self._state = "OPEN"
                 logger.error(f"Circuit '{self.name}' OPENED after {self._failures} failures.")
                 if settings.logfire_token:
+                    CB_TRIPS_COUNTER.add(1, {"circuit": self.name})
                     logfire.error("circuit_opened", circuit=self.name, failures=self._failures)
 
     def _reset(self):

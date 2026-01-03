@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     logfire_token: Optional[str] = None
     logfire_service_name: str = "market-liquidity-monitor"
     logfire_environment: str = "development"
+    logfire_trace_sample_rate: float = 0.2  # 0.2 = 20% of traces for quota protection
+    logfire_console_level: str = "info"  # 'info', 'warn', 'error'
+    logfire_auto_trace_min_duration: float = 0.075  # 75ms to ignore trivial traces
 
     model_config = SettingsConfigDict(
         env_file=".env",

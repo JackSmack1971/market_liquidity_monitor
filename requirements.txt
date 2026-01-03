@@ -5,7 +5,7 @@ gunicorn==21.2.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
 pydantic-ai==0.0.13
-logfire[fastapi]==0.46.0
+logfire[fastapi,aiohttp-client,httpx]==0.46.0
 
 # CCXT for Exchange Integration
 ccxt==4.5.30

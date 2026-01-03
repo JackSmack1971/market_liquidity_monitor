@@ -12,6 +12,25 @@ from typing import TYPE_CHECKING, List, Dict, Any
 import asyncio
 from datetime import datetime
 import statistics
+import logfire
+from config.settings import settings
+
+# Initialize Market Metrics
+SLIPPAGE_GAUGE = logfire.metric_gauge(
+    "market_slippage_bps",
+    unit="bps",
+    description="Real-time slippage in basis points"
+)
+HIGH_RISK_COUNTER = logfire.metric_counter(
+    "high_risk_execution_periods_total",
+    unit="1",
+    description="Total number of execution periods where slippage exceeded 200 bps"
+)
+ARBITRAGE_PROFIT_GAUGE = logfire.metric_gauge(
+    "market_arbitrage_profit_pct",
+    unit="%",
+    description="Fee-adjusted potential arbitrage profit percentage"
+)
 
 if TYPE_CHECKING:
     import ccxt.async_support as ccxt
@@ -171,6 +190,12 @@ def calculate_market_impact(
             # If precision fails, continue with raw values
             pass
 
+    # 7. Record Business Metrics for Observability
+    if settings.logfire_token:
+        SLIPPAGE_GAUGE.set(abs(slippage_bps), {"symbol": orderbook.symbol, "side": side})
+        if abs(slippage_bps) > 200:
+             HIGH_RISK_COUNTER.add(1, {"symbol": orderbook.symbol})
+
     return MarketImpactReport(
         symbol=orderbook.symbol,
         side=side,
@@ -181,7 +206,8 @@ def calculate_market_impact(
         slippage_bps=round(slippage_bps, 2),
         price_impact_percent=round(impact_pct, 4),
         critical_depth_level=final_price_level,
-        warning=warning_msg
+        warning=warning_msg,
+        latency_ms=orderbook.latency_ms
     )
 
 
@@ -328,18 +354,28 @@ async def compare_liquidity_across_venues(
         if sell_revenue > buy_cost:
             arbitrage_opportunity = True
             potential_profit_pct = ((sell_revenue - buy_cost) / buy_cost) * 100
+            
+            # Record Arbitrage Metric
+            if settings.logfire_token:
+                ARBITRAGE_PROFIT_GAUGE.set(
+                    potential_profit_pct, 
+                    {
+                        "symbol": symbol, 
+                        "venue_pair": f"{lowest_buy[0]}-{highest_sell[0]}"
+                    }
+                )
     
-    # Generate summary
+    # Generate summary with fee-adjusted insights
     summary_parts = [
-        f"Recommended venue: {best_venue.exchange_id} (slippage: {best_venue.slippage_bps:.2f} bps)"
+        f"Recommended venue: {best_venue.exchange_id} (Price: {best_venue.fill_price:.2f}, Slippage: {best_venue.slippage_bps:.2f} bps, Fee: {best_venue.taker_fee_pct:.3f}%)"
     ]
     
     if arbitrage_opportunity:
-        summary_parts.append(f"Arbitrage opportunity detected: {potential_profit_pct:.2f}% potential profit")
+        summary_parts.append(f"🔥 Arbitrage opportunity detected: {potential_profit_pct:.2f}% potential profit (fee-adjusted)")
     
     if len(eligible_venues) < len(venue_analyses):
         ineligible_count = len(venue_analyses) - len(eligible_venues)
-        summary_parts.append(f"{ineligible_count} venue(s) excluded due to health or limit issues")
+        summary_parts.append(f"⚠️ {ineligible_count} venue(s) excluded due to health or limit issues")
     
     comparison_summary = ". ".join(summary_parts)
     
