@@ -13,3 +13,11 @@ dist/
 *.egg-info/
 .vscode/
 .idea/
+
+# Test artifacts
+test_*.txt
+*.log
+results.xml
+audit_report.json
+outdated_packages.json
+final_test_report.txt
