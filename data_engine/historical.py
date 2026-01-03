@@ -13,13 +13,14 @@ from collections import defaultdict
 
 from .models import HistoricalSnapshot, OrderBook, LiquidityAlert
 from . import exchange_manager
+from .database import db_manager
 
 
 class HistoricalTracker:
     """
     Tracks and stores historical liquidity snapshots.
 
-    Uses file-based JSON storage (can be upgraded to database later).
+    Uses PostgreSQL as primary storage with file-based JSON fallback.
     """
 
     def __init__(self, storage_dir: str = "./data/historical"):
@@ -27,7 +28,7 @@ class HistoricalTracker:
         Initialize historical tracker.
 
         Args:
-            storage_dir: Directory for storing snapshot files
+            storage_dir: Directory for storing fallback snapshot files
         """
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
@@ -91,26 +92,38 @@ class HistoricalTracker:
             imbalance_ratio=imbalance,
         )
 
-        # Store snapshot
+        # Store snapshot (DB + JSON Fallback)
         await self._store_snapshot(snapshot)
 
         return snapshot
 
     async def _store_snapshot(self, snapshot: HistoricalSnapshot):
         """
-        Store snapshot to file.
+        Store snapshot to DB or fallback file.
 
         Args:
             snapshot: Snapshot to store
         """
+        # 1. Try PostgreSQL
+        if db_manager.is_active:
+            try:
+                await db_manager.store_snapshot(snapshot.model_dump())
+            except Exception as e:
+                print(f"Error storing to DB: {e}")
+
+        # 2. Always maintain JSON fallback (or only if DB fails? 
+        # For now, let's keep JSON as a local buffer/fallback)
         file_path = self._get_snapshot_file(snapshot.symbol, snapshot.exchange)
 
         # Load existing snapshots
         snapshots = []
         if file_path.exists():
-            with open(file_path, 'r') as f:
-                data = json.load(f)
-                snapshots = [HistoricalSnapshot(**s) for s in data]
+            try:
+                with open(file_path, 'r') as f:
+                    data = json.load(f)
+                    snapshots = [HistoricalSnapshot(**s) for s in data]
+            except Exception as e:
+                print(f"Error loading JSON fallback: {e}")
 
         # Add new snapshot
         snapshots.append(snapshot)
@@ -119,12 +132,15 @@ class HistoricalTracker:
         snapshots = snapshots[-1000:]
 
         # Save to file
-        with open(file_path, 'w') as f:
-            json.dump(
-                [s.model_dump(mode='json') for s in snapshots],
-                f,
-                indent=2
-            )
+        try:
+            with open(file_path, 'w') as f:
+                json.dump(
+                    [s.model_dump(mode='json') for s in snapshots],
+                    f,
+                    indent=2
+                )
+        except Exception as e:
+            print(f"Error saving JSON fallback: {e}")
 
         # Update cache
         cache_key = f"{snapshot.exchange}:{snapshot.symbol}"
@@ -147,24 +163,37 @@ class HistoricalTracker:
         Returns:
             List of historical snapshots
         """
+        # 1. Try PostgreSQL first
+        if db_manager.is_active:
+            try:
+                db_snapshots = await db_manager.get_snapshots(symbol, exchange, hours)
+                if db_snapshots:
+                    return [HistoricalSnapshot(**s) for s in db_snapshots]
+            except Exception as e:
+                print(f"Error fetching from DB: {e}")
+
+        # 2. Fallback to JSON file
         file_path = self._get_snapshot_file(symbol, exchange)
 
         if not file_path.exists():
             return []
 
         # Load from file
-        with open(file_path, 'r') as f:
-            data = json.load(f)
-            snapshots = [HistoricalSnapshot(**s) for s in data]
+        try:
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+                snapshots = [HistoricalSnapshot(**s) for s in data]
 
-        # Filter by time window
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
-        filtered = [
-            s for s in snapshots
-            if s.timestamp >= cutoff
-        ]
-
-        return filtered
+            # Filter by time window
+            cutoff = datetime.utcnow() - timedelta(hours=hours)
+            filtered = [
+                s for s in snapshots
+                if s.timestamp >= cutoff
+            ]
+            return filtered
+        except Exception as e:
+            print(f"Error loading JSON fallback: {e}")
+            return []
 
     async def get_baseline_metrics(
         self,

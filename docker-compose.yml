@@ -10,6 +10,9 @@ services:
     environment:
       - API_HOST=0.0.0.0
       - API_PORT=8000
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    depends_on:
+      - db
     command: python -m market_liquidity_monitor.api.main
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
@@ -31,3 +34,18 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-mlm_user}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mlm_password}
+      - POSTGRES_DB=${POSTGRES_DB:-market_liquidity}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

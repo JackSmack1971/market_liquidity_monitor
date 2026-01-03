@@ -452,5 +452,62 @@ class TestIntegration:
             assert result1 == result2
 
 
+# Tests for Database
+class TestDatabase:
+    """Test PostgreSQL database manager."""
+
+    @pytest.mark.asyncio
+    async def test_db_connection_fail_graceful(self):
+        """Test that DB manager handles connection failure gracefully."""
+        from market_liquidity_monitor.data_engine.database import DatabaseManager
+        # Use invalid URL
+        invalid_manager = DatabaseManager(url="postgresql+asyncpg://invalid:invalid@localhost:5432/invalid")
+        await invalid_manager.connect()
+        assert invalid_manager.is_active is False
+        await invalid_manager.disconnect()
+
+    @pytest.mark.asyncio
+    @patch('market_liquidity_monitor.data_engine.database.async_sessionmaker')
+    @patch('market_liquidity_monitor.data_engine.database.create_async_engine')
+    async def test_store_snapshot_mock(self, mock_create_engine, mock_sessionmaker):
+        """Test storing snapshot with mocked DB."""
+        from market_liquidity_monitor.data_engine.database import DatabaseManager
+        from unittest.mock import MagicMock
+        manager = DatabaseManager()
+        manager._is_active = True
+        
+        mock_session = AsyncMock()
+        mock_sessionmaker.return_value = MagicMock(return_value=mock_session)
+        
+        snapshot_data = {"symbol": "BTC/USDT", "exchange": "binance", "best_bid": 100.0}
+        await manager.store_snapshot(snapshot_data)
+        
+        assert mock_session.add.called
+
+
+class TestDBHistoricalTracking:
+    """Test historical tracking with DB integration."""
+
+    @pytest.mark.asyncio
+    async def test_get_snapshots_db_fallback(self, tmp_path):
+        """Test that get_snapshots falls back to JSON if DB inactive."""
+        from market_liquidity_monitor.data_engine.historical import HistoricalTracker
+        from market_liquidity_monitor.data_engine.database import db_manager
+        
+        tracker = HistoricalTracker(storage_dir=str(tmp_path))
+        db_manager._is_active = False # Ensure DB is inactive
+        
+        # Manually add snapshot to JSON
+        import json
+        file_path = tracker._get_snapshot_file("TEST/USDT", "binance")
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(file_path, 'w') as f:
+            json.dump([{"symbol": "TEST/USDT", "exchange": "binance", "timestamp": datetime.utcnow().isoformat(), "best_bid": 100.0}], f)
+            
+        snapshots = await tracker.get_snapshots("TEST/USDT", "binance")
+        assert len(snapshots) == 1
+        assert snapshots[0].best_bid == 100.0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

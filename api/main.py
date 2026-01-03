@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from ..config import settings
-from ..data_engine import exchange_manager
+from ..data_engine import exchange_manager, cache_manager
+from ..data_engine.database import db_manager
 from .routes import router
 
 
@@ -25,12 +26,18 @@ async def lifespan(app: FastAPI):
     print(f"Default exchange: {settings.default_exchange}")
     print(f"LLM model: {settings.default_model}")
 
+    # Connect to cache and database
+    await cache_manager.connect()
+    await db_manager.connect()
+
     yield
 
     # Shutdown
     print("Shutting down...")
     await exchange_manager.close_all()
-    print("All exchange connections closed")
+    await cache_manager.disconnect()
+    await db_manager.disconnect()
+    print("All connections closed")
 
 
 # Create FastAPI application

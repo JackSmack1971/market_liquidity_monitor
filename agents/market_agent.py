@@ -52,10 +52,16 @@ def create_market_agent() -> Agent[None, LiquidityAnalysis]:
         Configured Pydantic-AI agent with OpenRouter model and tools
     """
     # Configure OpenRouter model
+    if not settings.openrouter_api_key:
+        print("⚠️ OPENROUTER_API_KEY not set. Using dummy key for initialization.")
+        api_key = "sk-dummy"
+    else:
+        api_key = settings.openrouter_api_key
+
     model = OpenAIModel(
         settings.default_model,
         base_url=settings.openrouter_base_url,
-        api_key=settings.openrouter_api_key,
+        api_key=api_key,
     )
 
     # Create agent with tools
