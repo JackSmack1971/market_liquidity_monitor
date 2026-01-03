@@ -76,12 +76,12 @@ st.set_page_config(
 
 
 @st.cache_resource
-def get_cached_client(exchange_id: str):
+async def get_cached_client(exchange_id: str):
     """
-    Cache the CCXT exchange client to reuse connections and respect rate limits.
+    Get pooled client from exchange_manager.
     """
-    from market_liquidity_monitor.data_engine.exchange import ExchangeClient
-    return ExchangeClient(exchange_id)
+    from market_liquidity_monitor.data_engine.exchange import exchange_manager
+    return await exchange_manager.get_client(exchange_id)
 
 
 def generate_analysis_report():
@@ -210,7 +210,7 @@ def initialize_session_state():
 
 async def fetch_orderbook(symbol: str, exchange: str):
     """Fetch order book."""
-    client = get_cached_client(exchange)
+    client = await get_cached_client(exchange)
     return await client.fetch_order_book(symbol, limit=50)
 
 
@@ -325,7 +325,8 @@ def main():
         symbol = st.selectbox(
             "Trading Pair",
             ["SOL/USDT", "BTC/USDT", "ETH/USDT", "BNB/USDT", "ADA/USDT"],
-            index=0
+            index=0,
+            key="symbol_select"
         )
         st.session_state.current_symbol = symbol
 
@@ -333,9 +334,28 @@ def main():
         exchange = st.selectbox(
             "Primary Exchange",
             ["binance", "coinbase", "kraken", "bybit"],
-            index=0
+            index=0,
+            key="exchange_select"
         )
         st.session_state.current_exchange = exchange
+
+        # System Health Monitor
+        st.markdown("---")
+        st.subheader("🏥 System Health")
+        
+        # Check pool status via internal dictionary (Sync check)
+        from market_liquidity_monitor.data_engine.exchange import exchange_manager
+        client_instance = exchange_manager._clients.get(exchange)
+        
+        if client_instance:
+             status = client_instance.status
+             state_color = "green" if status['is_healthy'] else "red"
+             if status['state'] == "HALF_OPEN": state_color = "orange"
+             
+             st.markdown(f"**Status**: :{state_color}[{status['state']}]")
+             st.markdown(f"**Failures**: {status['failures']}")
+        else:
+             st.markdown("**Status**: :grey[IDLE]")
 
         st.markdown("---")
 

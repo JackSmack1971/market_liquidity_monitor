@@ -90,6 +90,16 @@ class ExchangeClient:
             recovery_timeout=30
         )
 
+    @property
+    def status(self) -> dict:
+        """Get exchange connection health status."""
+        return {
+            "name": self.exchange_id,
+            "state": self.circuit_breaker.state,
+            "failures": self.circuit_breaker._failures,
+            "is_healthy": self.circuit_breaker.state == "CLOSED"
+        }
+
     async def __aenter__(self):
         """Async context manager entry."""
         return self
