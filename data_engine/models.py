@@ -5,7 +5,7 @@ Uses Pydantic for type-safe data structures.
 """
 
 from pydantic import BaseModel, Field, ConfigDict
-from typing import List, Optional
+from typing import List, Optional, Dict
 from datetime import datetime, timezone, UTC
 
 
