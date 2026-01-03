@@ -1,7 +1,8 @@
 """Data engine module for market data fetching."""
 
-from .exchange import ExchangeClient, ExchangeManager, exchange_manager
-from .models import (
+from data_engine.exchange import ExchangeClient, ExchangeManager, exchange_manager
+from data_engine.cache import cache_manager
+from data_engine.models import (
     OrderBook,
     OrderBookLevel,
     LiquidityAnalysis,
@@ -12,6 +13,7 @@ __all__ = [
     "ExchangeClient",
     "ExchangeManager",
     "exchange_manager",
+    "cache_manager",
     "OrderBook",
     "OrderBookLevel",
     "LiquidityAnalysis",

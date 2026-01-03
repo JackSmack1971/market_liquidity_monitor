@@ -41,6 +41,39 @@ st.set_page_config(
 )
 
 
+@st.cache_resource
+def get_cached_client(exchange_id: str):
+    """
+    Cache the CCXT exchange client to reuse connections and respect rate limits.
+    """
+    from market_liquidity_monitor.data_engine.exchange import ExchangeClient
+    return ExchangeClient(exchange_id)
+
+
+def generate_analysis_report():
+    """
+    Callable for st.download_button to generate report on demand.
+    """
+    # Find the last analysis from messages or session state
+    # enhanced_app.py stores messages in st.session_state.messages
+    if not st.session_state.messages:
+        return "No analysis available."
+    
+    # Get the last assistant message
+    last_assistant_msg = next((m["content"] for m in reversed(st.session_state.messages) if m["role"] == "assistant"), None)
+    if not last_assistant_msg:
+        return "No analysis response found."
+        
+    report = f"""# Advanced Liquidity Analysis Report
+Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
+Symbol: {st.session_state.current_symbol}
+Exchange: {st.session_state.current_exchange}
+
+{last_assistant_msg}
+"""
+    return report
+
+
 def initialize_session_state():
     """Initialize session state."""
     if "messages" not in st.session_state:
@@ -59,7 +92,7 @@ def initialize_session_state():
 
 async def fetch_orderbook(symbol: str, exchange: str):
     """Fetch order book."""
-    client = await exchange_manager.get_client(exchange)
+    client = get_cached_client(exchange)
     return await client.fetch_order_book(symbol, limit=50)
 
 
@@ -142,6 +175,17 @@ def main():
 
         st.markdown("---")
         st.caption(f"Model: {settings.default_model}")
+
+        # Download button for latest analysis
+        if any(m["role"] == "assistant" for m in st.session_state.messages):
+            st.markdown("---")
+            st.download_button(
+                label="📥 Download Analysis Report",
+                data=generate_analysis_report,
+                file_name=f"adv_liquidity_report_{datetime.now().strftime('%Y%md_%H%M%S')}.md",
+                mime="text/markdown",
+                use_container_width=True
+            )
 
     # Main content tabs
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -243,38 +287,56 @@ def main():
 
     # TAB 2: Order Book Visualization
     with tab2:
-        if st.session_state.orderbook:
-            orderbook = st.session_state.orderbook
+        render_orderbook_fragment()
 
-            # Metrics
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric(
-                    "Best Bid",
-                    f"${orderbook.best_bid.price:,.4f}" if orderbook.best_bid else "N/A"
-                )
-            with col2:
-                st.metric(
-                    "Best Ask",
-                    f"${orderbook.best_ask.price:,.4f}" if orderbook.best_ask else "N/A"
-                )
-            with col3:
-                st.metric(
-                    "Spread",
-                    f"{orderbook.spread_percentage:.3f}%" if orderbook.spread_percentage else "N/A"
-                )
-            with col4:
-                depth = orderbook.get_cumulative_volume("bids", 10)
-                st.metric("Bid Depth (10L)", f"{depth:,.2f}")
+@st.fragment(run_every="5s")
+def render_orderbook_fragment():
+    """Fragment for real-time order book updates."""
+    symbol = st.session_state.current_symbol
+    exchange = st.session_state.current_exchange
+    
+    # Polling for fresh data
+    try:
+        orderbook = asyncio.run(fetch_orderbook(symbol, exchange))
+        st.session_state.orderbook = orderbook
+    except Exception as e:
+        st.error(f"Polling error: {e}")
 
-            # Heatmap
-            if show_heatmap:
-                st.subheader("🔥 Liquidity Heatmap")
-                fig = create_liquidity_heatmap(orderbook, levels=30)
-                st.plotly_chart(fig, use_container_width=True)
+    if st.session_state.orderbook:
+        orderbook = st.session_state.orderbook
 
-        else:
-            st.info("Click 'Refresh Data' to load order book")
+        # Metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric(
+                "Best Bid",
+                f"${orderbook.best_bid.price:,.4f}" if orderbook.best_bid else "N/A"
+            )
+        with col2:
+            st.metric(
+                "Best Ask",
+                f"${orderbook.best_ask.price:,.4f}" if orderbook.best_ask else "N/A"
+            )
+        with col3:
+            st.metric(
+                "Spread",
+                f"{orderbook.spread_percentage:.3f}%" if orderbook.spread_percentage else "N/A"
+            )
+        with col4:
+            depth = orderbook.get_cumulative_volume("bids", 10)
+            st.metric("Bid Depth (10L)", f"{depth:,.2f}")
+
+        # Heatmap
+        # (show_heatmap is from the main scope, but since this is a fragment 
+        # it will refresh when the main script reruns if needed, 
+        # but here we just use the current state)
+        st.subheader("🔥 Liquidity Heatmap")
+        from market_liquidity_monitor.frontend.advanced_visualizations import create_liquidity_heatmap
+        fig = create_liquidity_heatmap(orderbook, levels=30)
+        st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        st.info("No order book data loaded yet.")
 
     # TAB 3: Multi-Exchange Comparison
     with tab3:

@@ -1,16 +1,43 @@
-"""
-Exchange integration using CCXT.
-
-Provides async wrapper around CCXT for non-blocking market data fetching.
-"""
-
 import ccxt.async_support as ccxt
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable
 import asyncio
+import time
 from decimal import Decimal
+from functools import wraps
 
-from .models import OrderBook, OrderBookLevel
-from ..config import settings
+from data_engine.models import OrderBook, OrderBookLevel
+from config import settings
+
+
+def with_retry(retries: int = 3, backoff: float = 1.0):
+    """
+    Decorator for robust CCXT request retries.
+    Handles NetworkError, RateLimitExceeded, and DDoSProtection.
+    """
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            last_error = None
+            for attempt in range(retries):
+                try:
+                    return await func(self, *args, **kwargs)
+                except (ccxt.RateLimitExceeded, ccxt.DDoSProtection) as e:
+                    last_error = e
+                    # Mandatory 10s sleep for rate limits/DDoS protection
+                    delay = 10.0
+                    print(f"⚠️ Rate limit hit on {self.exchange_id}, sleeping {delay}s (Attempt {attempt + 1}/{retries})")
+                    await asyncio.sleep(delay)
+                except (ccxt.NetworkError, ccxt.RequestTimeout) as e:
+                    last_error = e
+                    delay = backoff * (2 ** attempt)
+                    print(f"Network error on {self.exchange_id}, retrying in {delay}s... ({e})")
+                    await asyncio.sleep(delay)
+                except Exception as e:
+                    # Don't retry on other errors
+                    raise e
+            raise last_error
+        return wrapper
+    return decorator
 
 
 class ExchangeClient:
@@ -18,8 +45,9 @@ class ExchangeClient:
     Async wrapper for CCXT exchange operations.
 
     Handles:
-    - Async order book fetching
+    - Async order book fetching with retry logic
     - Precision handling for exchange-specific requirements
+    - Market metadata loading and limit validation
     - Connection lifecycle management
     """
 
@@ -40,11 +68,13 @@ class ExchangeClient:
         self.exchange_id = exchange_id or settings.default_exchange
         self.api_key = api_key or settings.exchange_api_key
         self.api_secret = api_secret or settings.exchange_api_secret
+        self._markets_loaded = False
 
         # Initialize exchange instance
         exchange_class = getattr(ccxt, self.exchange_id)
         config = {
-            "enableRateLimit": settings.enable_rate_limit,
+            "enableRateLimit": True,  # Mandatory for production stability
+            "adjustForTimeDifference": True,  # Prevent timestamp ahead of server errors
         }
 
         if self.api_key and self.api_secret:
@@ -65,12 +95,29 @@ class ExchangeClient:
         """Close exchange connection."""
         if self.exchange:
             await self.exchange.close()
+            print(f"🔌 Connection closed for {self.exchange_id}")
 
+    async def ensure_markets_loaded(self):
+        """Ensure market metadata is loaded before operations."""
+        if not self._markets_loaded:
+            # Avoid circular import by importing here if needed, 
+            # but we already use absolute imports in the manager.
+            from data_engine.exchange import exchange_manager
+            if self.exchange_id in exchange_manager._markets_cache:
+                self.exchange.markets = exchange_manager._markets_cache[self.exchange_id]
+                self._markets_loaded = True
+            else:
+                print(f"Loading markets for {self.exchange_id}...")
+                await self.exchange.load_markets()
+                exchange_manager._markets_cache[self.exchange_id] = self.exchange.markets
+                self._markets_loaded = True
+
+    @with_retry()
     async def fetch_order_book(
         self, symbol: str, limit: int = 20
     ) -> OrderBook:
         """
-        Fetch order book for a trading pair.
+        Fetch order book for a trading pair with retry logic.
 
         Args:
             symbol: Trading pair symbol (e.g., 'SOL/USDT')
@@ -78,11 +125,9 @@ class ExchangeClient:
 
         Returns:
             OrderBook object with structured bid/ask data
-
-        Raises:
-            ccxt.NetworkError: If network request fails
-            ccxt.ExchangeError: If exchange returns error
         """
+        await self.ensure_markets_loaded()
+        
         # Fetch raw order book from exchange
         raw_orderbook = await self.exchange.fetch_order_book(symbol, limit)
 
@@ -104,6 +149,7 @@ class ExchangeClient:
             asks=asks,
         )
 
+    @with_retry()
     async def fetch_markets(self) -> Dict[str, Any]:
         """
         Fetch all available markets on the exchange.
@@ -123,12 +169,13 @@ class ExchangeClient:
         Returns:
             List of matching symbol pairs
         """
-        markets = await self.fetch_markets()
+        await self.ensure_markets_loaded()
+        markets = self.exchange.markets
         query_upper = query.upper()
 
         matching_symbols = [
             market["symbol"]
-            for market in markets
+            for market in markets.values()
             if query_upper in market["symbol"]
         ]
 
@@ -137,43 +184,59 @@ class ExchangeClient:
     def amount_to_precision(self, symbol: str, amount: float) -> str:
         """
         Format amount to exchange-specific precision.
-
-        Args:
-            symbol: Trading pair symbol
-            amount: Amount to format
-
-        Returns:
-            Formatted amount as string
         """
         return self.exchange.amount_to_precision(symbol, amount)
 
     def price_to_precision(self, symbol: str, price: float) -> str:
         """
         Format price to exchange-specific precision.
+        """
+        return self.exchange.price_to_precision(symbol, price)
+
+    def validate_order_limits(self, symbol: str, amount: float, price: float) -> tuple[bool, str]:
+        """
+        Validate that order amount and cost satisfy exchange limits.
 
         Args:
             symbol: Trading pair symbol
-            price: Price to format
+            amount: Order amount
+            price: Order price
 
         Returns:
-            Formatted price as string
+            (is_valid, error_message)
         """
-        return self.exchange.price_to_precision(symbol, price)
+        if not self._markets_loaded:
+            return True, ""
+            
+        try:
+            market = self.exchange.market(symbol)
+        except Exception:
+            return False, f"Symbol {symbol} not found on {self.exchange_id}"
+
+        limits = market.get('limits', {})
+        
+        # Check amount limits
+        amount_limits = limits.get('amount', {})
+        if amount_limits.get('min') is not None and amount < amount_limits['min']:
+            return False, f"Order amount {amount} is below the minimum required ({amount_limits['min']}) for {symbol}"
+        if amount_limits.get('max') is not None and amount > amount_limits['max']:
+            return False, f"Order amount {amount} exceeds the maximum allowed ({amount_limits['max']}) for {symbol}"
+            
+        # Check cost limits (amount * price)
+        cost = amount * price
+        cost_limits = limits.get('cost', {})
+        if cost_limits.get('min') is not None and cost < cost_limits['min']:
+            return False, f"Order cost ${cost:,.2f} is below the minimum required (${cost_limits['min']:,.2f}) for {symbol}"
+            
+        return True, ""
 
     async def get_market_info(self, symbol: str) -> Dict[str, Any]:
         """
         Get detailed market information for a symbol.
-
-        Args:
-            symbol: Trading pair symbol
-
-        Returns:
-            Market metadata including precision, limits, etc.
         """
-        markets = await self.fetch_markets()
-        for market in markets:
-            if market["symbol"] == symbol:
-                return market
+        await self.ensure_markets_loaded()
+        if symbol in self.exchange.markets:
+            return self.exchange.markets[symbol]
 
         raise ValueError(f"Symbol {symbol} not found on {self.exchange_id}")
 
@@ -188,30 +251,33 @@ class ExchangeManager:
     def __init__(self):
         """Initialize exchange manager."""
         self._clients: Dict[str, ExchangeClient] = {}
+        self._markets_cache: Dict[str, Dict[str, Any]] = {}
+
+    async def preload_exchange(self, exchange_id: str):
+        """Pre-load markets for an exchange to warm up the cache."""
+        async with ExchangeClient(exchange_id) as client:
+            await client.ensure_markets_loaded()
+            self._markets_cache[exchange_id] = client.exchange.markets
+            print(f"✅ Market cache warmed for {exchange_id}")
 
     async def get_client(self, exchange_id: str = None) -> ExchangeClient:
         """
-        Get or create exchange client.
-
-        Args:
-            exchange_id: Exchange identifier
-
-        Returns:
-            ExchangeClient instance
+        Get or create pooled exchange client.
+        Ensures stable rate limit buckets across requests.
         """
         exchange_id = exchange_id or settings.default_exchange
-
         if exchange_id not in self._clients:
+            print(f"🚀 Initializing pooled client for {exchange_id}")
             self._clients[exchange_id] = ExchangeClient(exchange_id)
-
         return self._clients[exchange_id]
 
     async def close_all(self):
-        """Close all exchange connections."""
-        await asyncio.gather(
-            *[client.close() for client in self._clients.values()]
-        )
+        """Close all pooled exchange connections."""
+        for exchange_id, client in self._clients.items():
+            await client.close()
+        self._markets_cache.clear()
         self._clients.clear()
+        print("✅ All exchange connections closed.")
 
 
 # Global exchange manager instance

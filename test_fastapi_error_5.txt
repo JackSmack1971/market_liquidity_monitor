@@ -1,0 +1,37 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.9, pytest-9.0.2, pluggy-1.6.0 -- C:\Users\click\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\python.exe
+cachedir: .pytest_cache
+hypothesis profile 'default'
+rootdir: C:\Users\click\OneDrive\Documents\mlm\market_liquidity_monitor
+plugins: anyio-4.11.0, Faker-40.1.0, hypothesis-6.148.4, langsmith-0.5.1, logfire-4.16.0, asyncio-1.3.0, cov-7.0.0, mock-3.15.1
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 0 items / 1 error
+
+=================================== ERRORS ====================================
+______________ ERROR collecting tests/test_fastapi_standards.py _______________
+tests\test_fastapi_standards.py:3: in <module>
+    from api.main import app
+api\__init__.py:3: in <module>
+    from api.main import app
+api\main.py:14: in <module>
+    from api.routes import router
+api\routes.py:15: in <module>
+    from agents import MarketAnalyzer
+agents\__init__.py:3: in <module>
+    from agents.market_agent import MarketAnalyzer, market_analyzer, create_market_agent
+agents\market_agent.py:180: in <module>
+    market_analyzer = MarketAnalyzer()
+                      ^^^^^^^^^^^^^^^^
+agents\market_agent.py:114: in __init__
+    self.agent = create_market_agent()
+                 ^^^^^^^^^^^^^^^^^^^^^
+agents\market_agent.py:95: in create_market_agent
+    retries=settings.agent_max_retries,
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: module 'config.settings' has no attribute 'agent_max_retries'
+------------------------------- Captured stdout -------------------------------
+Warning: OPENROUTER_API_KEY not found. Using dummy key for testing.
+=========================== short test summary info ===========================
+ERROR tests/test_fastapi_standards.py - AttributeError: module 'config.settin...
+!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+============================== 1 error in 7.86s ===============================

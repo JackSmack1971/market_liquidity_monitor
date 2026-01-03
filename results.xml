@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="1" time="3.127" timestamp="2026-01-03T11:10:32.969226-05:00" hostname="bretlaptop"><testcase classname="" name="tests.test_agent_reasoning" time="0.000"><error message="collection failure">tests\test_agent_reasoning.py:4: in &lt;module&gt;
+    from agents.market_agent import create_market_agent
+agents\__init__.py:3: in &lt;module&gt;
+    from .market_agent import MarketAnalyzer, market_analyzer, create_market_agent
+agents\market_agent.py:164: in &lt;module&gt;
+    market_analyzer = MarketAnalyzer()
+                      ^^^^^^^^^^^^^^^^
+agents\market_agent.py:98: in __init__
+    self.agent = create_market_agent()
+                 ^^^^^^^^^^^^^^^^^^^^^
+agents\market_agent.py:61: in create_market_agent
+    primary_model = OpenAIModel(
+E   TypeError: OpenAIChatModel.__init__() got an unexpected keyword argument 'base_url'</error></testcase></testsuite></testsuites>

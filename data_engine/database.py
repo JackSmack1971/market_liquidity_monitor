@@ -10,6 +10,7 @@ from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import String, Float, DateTime, select, desc
+from datetime import datetime, UTC
 
 # Database URL from environment
 DATABASE_URL = os.getenv(
@@ -28,7 +29,7 @@ class HistoricalSnapshotModel(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(20), index=True)
     exchange: Mapped[str] = mapped_column(String(50), index=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC), index=True)
 
     best_bid: Mapped[float] = mapped_column(Float)
     best_ask: Mapped[float] = mapped_column(Float)
@@ -95,11 +96,7 @@ class DatabaseManager:
         if not self._is_active:
             return []
 
-        cutoff = datetime.utcnow() - asyncio.to_thread(lambda: datetime.timedelta(hours=hours))
-        # Wait, datetime arithmetic is blocking but negligible here. 
-        # Actually timedelta is fine.
-        from datetime import timedelta
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
 
         async with self.session_factory() as session:
             stmt = select(HistoricalSnapshotModel).where(

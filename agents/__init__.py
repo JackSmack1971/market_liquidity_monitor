@@ -1,6 +1,7 @@
 """Agents module for LLM-powered market analysis."""
 
-from .market_agent import MarketAnalyzer, market_analyzer, create_market_agent
+from agents.market_agent import MarketAnalyzer, market_analyzer, create_market_agent
+from agents.tools import AGENT_TOOLS
 from .tools import AGENT_TOOLS
 
 __all__ = [

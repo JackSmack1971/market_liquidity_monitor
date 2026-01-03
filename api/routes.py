@@ -7,13 +7,13 @@ Provides endpoints for:
 - Natural language queries
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from typing import Optional
 
-from ..data_engine import ExchangeClient, OrderBook
-from ..data_engine.models import LiquidityAnalysis, MarketQuery
-from ..agents import MarketAnalyzer
-from .dependencies import get_exchange_client, get_market_analyzer
+from data_engine import ExchangeClient, OrderBook
+from data_engine.models import LiquidityAnalysis, MarketQuery
+from agents import MarketAnalyzer
+from api.dependencies import get_exchange_client, get_market_analyzer
 
 router = APIRouter()
 
@@ -23,6 +23,7 @@ async def get_orderbook(
     symbol: str,
     exchange: str = Query(default="binance", description="Exchange name"),
     levels: int = Query(default=20, ge=1, le=100, description="Number of levels"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     client: ExchangeClient = Depends(get_exchange_client),
 ) -> OrderBook:
     """
@@ -41,6 +42,11 @@ async def get_orderbook(
     """
     try:
         orderbook = await client.fetch_order_book(symbol, limit=levels)
+        
+        # Log snapshot in background
+        from data_engine.historical import historical_tracker
+        background_tasks.add_task(historical_tracker.capture_snapshot, symbol, exchange)
+        
         return orderbook
     except Exception as e:
         raise HTTPException(
@@ -81,6 +87,7 @@ async def search_symbols(
 @router.post("/analyze", response_model=LiquidityAnalysis)
 async def analyze_liquidity(
     query: MarketQuery,
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     analyzer: MarketAnalyzer = Depends(get_market_analyzer),
 ) -> LiquidityAnalysis:
     """
@@ -112,6 +119,12 @@ async def analyze_liquidity(
             symbol=query.symbol,
             exchange=query.exchange,
         )
+        
+        # Log snapshot in background if symbol and exchange are known
+        if query.symbol and query.exchange:
+            from data_engine.historical import historical_tracker
+            background_tasks.add_task(historical_tracker.capture_snapshot, query.symbol, query.exchange)
+            
         return analysis
     except Exception as e:
         raise HTTPException(
@@ -153,7 +166,7 @@ async def quick_liquidity_check(
 async def estimate_slippage(
     symbol: str,
     order_size_usd: float = Query(..., gt=0, description="Order size in USD"),
-    side: str = Query(default="buy", regex="^(buy|sell)$"),
+    side: str = Query(default="buy", pattern="^(buy|sell)$"),
     exchange: str = Query(default="binance", description="Exchange name"),
     analyzer: MarketAnalyzer = Depends(get_market_analyzer),
 ) -> LiquidityAnalysis:
@@ -232,7 +245,7 @@ async def compare_exchanges_endpoint(
         POST /compare-exchanges?symbol=SOL/USDT&exchanges=binance&exchanges=coinbase
     """
     try:
-        from ..agents.tools import compare_exchanges
+        from agents.tools import compare_exchanges
 
         comparison = await compare_exchanges(
             symbol=symbol,
@@ -251,7 +264,7 @@ async def compare_exchanges_endpoint(
 async def calculate_market_impact_endpoint(
     symbol: str = Query(..., description="Trading pair symbol"),
     order_size_usd: float = Query(..., gt=0, description="Order size in USD"),
-    side: str = Query(default="buy", regex="^(buy|sell)$"),
+    side: str = Query(default="buy", pattern="^(buy|sell)$"),
     exchange: str = Query(default="binance", description="Exchange name"),
 ) -> dict:
     """
@@ -277,7 +290,7 @@ async def calculate_market_impact_endpoint(
         POST /market-impact?symbol=SOL/USDT&order_size_usd=10000&side=buy
     """
     try:
-        from ..agents.tools import calculate_market_impact
+        from agents.tools import calculate_market_impact
 
         impact = await calculate_market_impact(
             symbol=symbol,

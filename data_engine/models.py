@@ -4,9 +4,9 @@ Data models for market data.
 Uses Pydantic for type-safe data structures.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone, UTC
 
 
 class OrderBookLevel(BaseModel):
@@ -26,7 +26,7 @@ class OrderBook(BaseModel):
 
     symbol: str = Field(..., description="Trading pair symbol (e.g., SOL/USDT)")
     exchange: str = Field(..., description="Exchange name")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     bids: List[OrderBookLevel] = Field(..., description="Buy orders (descending price)")
     asks: List[OrderBookLevel] = Field(..., description="Sell orders (ascending price)")
@@ -116,41 +116,46 @@ class OrderBook(BaseModel):
 
 
 class LiquidityAnalysis(BaseModel):
-    """Analysis of order book liquidity."""
+    """Refined analysis of market liquidity with structured metrics for UI rendering."""
 
-    symbol: str
-    exchange: str
-    timestamp: datetime
+    symbol: str = Field(..., description="The trading pair symbol analyzed (e.g., SOL/USDT)")
+    exchange: str = Field(..., description="The exchange where the data was sourced from")
+    timestamp: datetime = Field(..., description="The exact time of this analysis")
 
     # Spread metrics
-    spread: float = Field(..., description="Absolute spread")
-    spread_percentage: float = Field(..., description="Spread as % of mid price")
+    spread: float = Field(..., description="The absolute difference between best bid and best ask")
+    spread_percentage: float = Field(..., description="The bid-ask spread as a percentage of the mid price")
 
     # Depth metrics
-    bid_depth_10: float = Field(..., description="Total volume in top 10 bids")
-    ask_depth_10: float = Field(..., description="Total volume in top 10 asks")
+    bid_depth_10: float = Field(..., description="Combined volume of the top 10 bid levels")
+    ask_depth_10: float = Field(..., description="Combined volume of the top 10 ask levels")
 
     # Liquidity at different price ranges
     liquidity_1pct: tuple[float, float] = Field(
-        ..., description="(volume, value) within 1% of best price"
+        ..., description="Available (volume, USD value) within 1% of the best price"
     )
     liquidity_2pct: tuple[float, float] = Field(
-        ..., description="(volume, value) within 2% of best price"
+        ..., description="Available (volume, USD value) within 2% of the best price"
     )
 
     # Market impact estimation
     estimated_slippage_1k: Optional[float] = Field(
-        None, description="Estimated slippage for $1k order"
+        None, description="Predicted slippage percentage for a $1,000 market order"
     )
     estimated_slippage_10k: Optional[float] = Field(
-        None, description="Estimated slippage for $10k order"
+        None, description="Predicted slippage percentage for a $10,000 market order"
+    )
+
+    # Risk Metrics
+    volatility_rating: str = Field(
+        ..., description="Current market volatility assessment (STABLE, MODERATE, VOLATILE)"
     )
 
     # Qualitative assessment
     liquidity_score: str = Field(
-        ..., description="HIGH, MEDIUM, LOW based on metrics"
+        ..., description="Overall liquidity grade: HIGH (Easy to trade), MEDIUM (Use caution), LOW (High slippage risk)"
     )
-    reasoning: str = Field(..., description="Human-readable analysis from LLM")
+    reasoning: str = Field(..., description="Detailed technical justification for the assigned liquidity score and metrics")
 
 
 class MarketQuery(BaseModel):
@@ -165,7 +170,7 @@ class ExchangeComparison(BaseModel):
     """Comparison of liquidity across multiple exchanges."""
 
     symbol: str = Field(..., description="Trading pair symbol")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Per-exchange data
     exchanges: List[str] = Field(..., description="List of exchanges compared")
@@ -224,18 +229,16 @@ class HistoricalSnapshot(BaseModel):
         ..., description="Bid volume / Ask volume ratio (>1 = buying pressure)"
     )
 
-    class Config:
-        """Pydantic config."""
-        json_encoders = {
-            datetime: lambda v: v.isoformat()
-        }
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
 
 
 class LiquidityAlert(BaseModel):
     """Alert triggered by liquidity anomaly."""
 
     alert_id: str = Field(..., description="Unique alert identifier")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     severity: str = Field(..., description="HIGH, MEDIUM, LOW")
 
     symbol: str
