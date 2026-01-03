@@ -1,11 +1,11 @@
 import ccxt.async_support as ccxt
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, List
 import asyncio
 import time
 from decimal import Decimal
 from functools import wraps
-
 from data_engine.models import OrderBook, OrderBookLevel
+from data_engine.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from config import settings
 
 
@@ -82,6 +82,13 @@ class ExchangeClient:
             config["secret"] = self.api_secret
 
         self.exchange: ccxt.Exchange = exchange_class(config)
+        
+        # Circuit Breaker for this exchange
+        self.circuit_breaker = CircuitBreaker(
+            name=self.exchange_id,
+            failure_threshold=5,
+            recovery_timeout=30
+        )
 
     async def __aenter__(self):
         """Async context manager entry."""
@@ -128,8 +135,12 @@ class ExchangeClient:
         """
         await self.ensure_markets_loaded()
         
-        # Fetch raw order book from exchange
-        raw_orderbook = await self.exchange.fetch_order_book(symbol, limit)
+        # Fetch with Circuit Breaker
+        raw_orderbook = await self.circuit_breaker.call(
+            self.exchange.fetch_order_book, 
+            symbol, 
+            limit
+        )
 
         # Convert to our structured format
         bids = [
@@ -158,6 +169,52 @@ class ExchangeClient:
             Dictionary of market information
         """
         return await self.exchange.fetch_markets()
+
+    @with_retry()
+    async def fetch_ohlcv(
+        self, 
+        symbol: str, 
+        timeframe: str = '1h', 
+        since: Optional[int] = None, 
+        limit: Optional[int] = None
+    ) -> List[list]:
+        """
+        Fetch OHLCV (candlestick) data.
+
+        Args:
+            symbol: Trading pair symbol
+            timeframe: Candle duration ('1m', '5m', '1h', '1d')
+            since: Timestamp in ms
+            limit: Number of candles
+
+        Returns:
+            List of [timestamp, open, high, low, close, volume]
+        """
+        await self.ensure_markets_loaded()
+        
+        if not self.exchange.has['fetchOHLCV']:
+            raise NotImplementedError(f"Exchange {self.exchange_id} does not support OHLCV fetching.")
+            
+        # Try Cache
+        from data_engine.cache import cache_manager
+        cache_key = f"ohlcv:{self.exchange_id}:{symbol}:{timeframe}:{since}:{limit}"
+        cached_data = await cache_manager.get(cache_key)
+        if cached_data:
+            return cached_data
+
+        # Fetch with Circuit Breaker
+        data = await self.circuit_breaker.call(
+            self.exchange.fetch_ohlcv, 
+            symbol, 
+            timeframe, 
+            since, 
+            limit
+        )
+        
+        # Set Cache (5 min TTL)
+        await cache_manager.set(cache_key, data, ttl=300)
+        
+        return data
 
     async def search_symbol(self, query: str) -> list[str]:
         """
@@ -192,6 +249,12 @@ class ExchangeClient:
         Format price to exchange-specific precision.
         """
         return self.exchange.price_to_precision(symbol, price)
+
+    def cost_to_precision(self, symbol: str, cost: float) -> str:
+        """
+        Format cost to exchange-specific precision.
+        """
+        return self.exchange.cost_to_precision(symbol, cost)
 
     def validate_order_limits(self, symbol: str, amount: float, price: float) -> tuple[bool, str]:
         """

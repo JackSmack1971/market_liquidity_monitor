@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from typing import Optional
 
 from data_engine import ExchangeClient, OrderBook
-from data_engine.models import LiquidityAnalysis, MarketQuery
+from data_engine.models import LiquidityScorecard, MarketQuery
 from agents import MarketAnalyzer
 from api.dependencies import get_exchange_client, get_market_analyzer
 
@@ -84,12 +84,12 @@ async def search_symbols(
         )
 
 
-@router.post("/analyze", response_model=LiquidityAnalysis)
+@router.post("/analyze", response_model=LiquidityScorecard)
 async def analyze_liquidity(
     query: MarketQuery,
     background_tasks: BackgroundTasks = BackgroundTasks(),
     analyzer: MarketAnalyzer = Depends(get_market_analyzer),
-) -> LiquidityAnalysis:
+) -> LiquidityScorecard:
     """
     Analyze market liquidity using natural language query.
 
@@ -162,14 +162,14 @@ async def quick_liquidity_check(
         )
 
 
-@router.post("/estimate-slippage", response_model=LiquidityAnalysis)
+@router.post("/estimate-slippage", response_model=LiquidityScorecard)
 async def estimate_slippage(
     symbol: str,
     order_size_usd: float = Query(..., gt=0, description="Order size in USD"),
     side: str = Query(default="buy", pattern="^(buy|sell)$"),
     exchange: str = Query(default="binance", description="Exchange name"),
     analyzer: MarketAnalyzer = Depends(get_market_analyzer),
-) -> LiquidityAnalysis:
+) -> LiquidityScorecard:
     """
     Estimate slippage for a potential order.
 
