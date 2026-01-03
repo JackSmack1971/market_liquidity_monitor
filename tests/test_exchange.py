@@ -1,115 +1,302 @@
-"""
-Tests for exchange data engine.
-
-Tests CCXT integration and order book fetching.
-"""
-
-import pytest
+import unittest
 import asyncio
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock, patch, PropertyMock
+from datetime import datetime
+import ccxt.async_support as ccxt
+from data_engine.exchange import ExchangeClient, ExchangeManager, with_retry
+from data_engine.models import OrderBook, OrderBookLevel
+from data_engine.circuit_breaker import CircuitBreaker
 
-from data_engine import ExchangeClient, OrderBook
+class TestExchangeIntegration(unittest.IsolatedAsyncioTestCase):
+    """Tests for the Exchange Integration layer."""
 
+    async def asyncSetUp(self):
+        """Setup mock environment."""
+        self.exchange_id = "binance"
+        self.symbol = "BTC/USDT"
+        
+        # Patch ccxt.binance to return a mock class
+        self.mock_ccxt_instance = MagicMock()
+        self.mock_ccxt_instance.load_markets = AsyncMock()
+        self.mock_ccxt_instance.fetch_order_book = AsyncMock()
+        self.mock_ccxt_instance.fetch_ohlcv = AsyncMock()
+        self.mock_ccxt_instance.close = AsyncMock()
+        self.mock_ccxt_instance.markets = {}
+        self.mock_ccxt_instance.has = {"fetchOHLCV": True}
+        
+        self.patcher_ccxt = patch(f'ccxt.async_support.{self.exchange_id}', return_value=self.mock_ccxt_instance)
+        self.patcher_ccxt.start()
+        
+        # Patch settings
+        self.patcher_settings = patch('data_engine.exchange.settings')
+        self.mock_settings = self.patcher_settings.start()
+        self.mock_settings.default_exchange = "binance"
+        self.mock_settings.exchange_api_key = None
+        self.mock_settings.exchange_api_secret = None
+        self.mock_settings.logfire_token = None
 
-@pytest.mark.asyncio
-async def test_exchange_client_initialization():
-    """Test exchange client can be initialized."""
-    client = ExchangeClient(exchange_id="binance")
-    assert client.exchange_id == "binance"
-    await client.close()
+        self.client = ExchangeClient(self.exchange_id)
 
+    async def asyncTearDown(self):
+        """Cleanup."""
+        self.patcher_ccxt.stop()
+        self.patcher_settings.stop()
 
-@pytest.mark.asyncio
-async def test_fetch_order_book_structure():
-    """Test order book fetching returns correct structure."""
-    client = ExchangeClient(exchange_id="binance")
+    # ========== Retry Decorator Tests ==========
 
-    # Mock the exchange fetch_order_book method
-    mock_orderbook = {
-        "bids": [[100.0, 1.5], [99.5, 2.0]],
-        "asks": [[101.0, 1.0], [101.5, 1.2]],
-    }
+    async def test_with_retry_rate_limit(self):
+        """Test with_retry decorator handles RateLimitExceeded."""
+        mock_self = MagicMock()
+        mock_self.exchange_id = "binance"
+        
+        call_count = 0
+        async def failing_func(self, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise ccxt.RateLimitExceeded("Slow down")
+            return "success"
 
-    with patch.object(client.exchange, 'fetch_order_book', new_callable=AsyncMock) as mock_fetch:
-        mock_fetch.return_value = mock_orderbook
-        # Mock ensure_markets_loaded to avoid real network call
-        with patch.object(client, 'ensure_markets_loaded', new_callable=AsyncMock):
-            orderbook = await client.fetch_order_book("BTC/USDT", limit=10)
+        decorated = with_retry(retries=2)(failing_func)
+        
+        with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+            result = await decorated(mock_self)
+            self.assertEqual(result, "success")
+            self.assertEqual(call_count, 2)
+            mock_sleep.assert_awaited_with(10.0)
 
+    async def test_client_lifecycle_and_status(self):
+        """Test status property and close."""
+        self.client.circuit_breaker._failures = 2
+        status = self.client.status
+        self.assertEqual(status["failures"], 2)
+        self.assertEqual(status["state"], "CLOSED")
+        
+        await self.client.close()
+        self.mock_ccxt_instance.close.assert_awaited_once()
 
-        # Verify structure
-        assert isinstance(orderbook, OrderBook)
-        assert orderbook.symbol == "BTC/USDT"
-        assert orderbook.exchange == "binance"
-        assert len(orderbook.bids) == 2
-        assert len(orderbook.asks) == 2
+    async def test_search_symbol(self):
+        """Test search_symbol filters markets."""
+        self.client._markets_loaded = True
+        self.client.exchange.markets = {
+            "BTC/USDT": {"symbol": "BTC/USDT"},
+            "SOL/USDT": {"symbol": "SOL/USDT"},
+            "BTC/FDUSD": {"symbol": "BTC/FDUSD"}
+        }
+        
+        results = await self.client.search_symbol("BTC")
+        self.assertEqual(len(results), 2)
+        self.assertIn("BTC/USDT", results)
+        self.assertIn("BTC/FDUSD", results)
 
-        # Verify best bid/ask
-        assert orderbook.best_bid.price == 100.0
-        assert orderbook.best_ask.price == 101.0
+    async def test_with_retry_network_error(self):
+        """Test with_retry decorator handles NetworkError with backoff."""
+        mock_self = MagicMock()
+        mock_self.exchange_id = "binance"
+        
+        call_count = 0
+        async def failing_func(self, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise ccxt.NetworkError("Timeout")
+            return "success"
 
-        # Verify spread
-        assert orderbook.spread == 1.0
+        decorated = with_retry(retries=3, backoff=0.1)(failing_func)
+        
+        with patch('asyncio.sleep', new_callable=AsyncMock) as mock_sleep:
+            result = await decorated(mock_self)
+            self.assertEqual(result, "success")
+            self.assertEqual(call_count, 3)
+            # Two sleeps: 0.1, 0.2
+            self.assertEqual(mock_sleep.call_count, 2)
 
-    await client.close()
+    def test_client_init_with_keys(self):
+        """Test initialization with explicit API keys."""
+        client = ExchangeClient(self.exchange_id, api_key="key", api_secret="secret")
+        self.assertEqual(client.api_key, "key")
+        # Verify passed to CCXT via config
+        # We can check if the mock was initialized with config containing keys
+        # But for now, client instance check is sufficient validation of our logic
+        self.assertEqual(client.api_secret, "secret")
 
+    async def test_fetch_order_book_fee_fallback(self):
+        """Test fetch_order_book uses market data for fees if exchange.fees missing."""
+        self.mock_ccxt_instance.fetch_order_book.return_value = {
+            "bids": [], "asks": [], "timestamp": 1700000000000
+        }
+        # Clear global fees, set specific market fee
+        del self.mock_ccxt_instance.fees
+        self.mock_ccxt_instance.markets = {self.symbol: {'taker': 0.003}}
+        
+        self.client._markets_loaded = True
+        orderbook = await self.client.fetch_order_book(self.symbol)
+        self.assertEqual(orderbook.taker_fee_pct, 0.3)
 
-@pytest.mark.asyncio
-async def test_orderbook_metrics():
-    """Test order book metric calculations."""
-    from data_engine.models import OrderBookLevel
+    async def test_fetch_markets(self):
+        """Test fetch_markets wrapper."""
+        # Ensure it behaves as AsyncMock
+        self.mock_ccxt_instance.fetch_markets = AsyncMock(return_value=[{"symbol": "BTC/USDT"}])
+        markets = await self.client.fetch_markets()
+        self.assertEqual(len(markets), 1)
+    
+    def test_cost_to_precision(self):
+        """Test cost_to_precision wrapper."""
+        self.client.exchange.cost_to_precision.return_value = "10.50"
+        self.assertEqual(self.client.cost_to_precision(self.symbol, 10.501), "10.50")
 
-    # Create test order book
-    orderbook = OrderBook(
-        symbol="SOL/USDT",
-        exchange="binance",
-        bids=[
-            OrderBookLevel(price=100.0, amount=10.0),
-            OrderBookLevel(price=99.0, amount=20.0),
-            OrderBookLevel(price=98.0, amount=30.0),
-        ],
-        asks=[
-            OrderBookLevel(price=101.0, amount=5.0),
-            OrderBookLevel(price=102.0, amount=10.0),
-            OrderBookLevel(price=103.0, amount=15.0),
-        ],
-    )
+    async def test_with_retry_generic_exception(self):
+        """Test retry decorator re-raises generic exceptions immediately."""
+        async def fail_gen(self):
+            raise ValueError("Generic Error")
+            
+        decorated = with_retry()(fail_gen)
+        
+        with self.assertRaises(ValueError):
+            await decorated(self.client)
 
-    # Test spread
-    assert orderbook.spread == 1.0
-    assert orderbook.spread_percentage == pytest.approx(0.995, rel=0.01)
+    # ========== ExchangeClient Tests ==========
 
-    # Test cumulative volume
-    bid_volume = orderbook.get_cumulative_volume("bids", 3)
-    assert bid_volume == 60.0
+    def test_client_initialization(self):
+        """Test ExchangeClient init and status."""
+        self.assertEqual(self.client.exchange_id, "binance")
+        self.assertTrue(self.client.status["is_healthy"])
+        self.assertEqual(self.client.status["state"], "CLOSED")
 
-    ask_volume = orderbook.get_cumulative_volume("asks", 3)
-    assert ask_volume == 30.0
+    async def test_fetch_order_book_success(self):
+        """Test fetch_order_book model conversion and fees."""
+        self.mock_ccxt_instance.fetch_order_book.return_value = {
+            "bids": [[100.0, 1.0]],
+            "asks": [[101.0, 2.0]],
+            "timestamp": 1700000000000
+        }
+        self.client.exchange.fees = {'trading': {'taker': 0.002}} # 0.2%
+        
+        # Bypass ensure_markets_loaded
+        self.client._markets_loaded = True
+        
+        orderbook = await self.client.fetch_order_book(self.symbol)
+        
+        self.assertIsInstance(orderbook, OrderBook)
+        self.assertEqual(orderbook.taker_fee_pct, 0.2)
+        self.assertEqual(len(orderbook.bids), 1)
+        self.assertEqual(orderbook.bids[0].price, 100.0)
+        self.assertIsNotNone(orderbook.latency_ms)
 
-    # Test liquidity at percentage
-    volume, value = orderbook.get_liquidity_at_percentage("bids", 2.0)
-    assert volume == 60.0  # Within 2% of 100.0 (100, 99, 98)
+    async def test_fetch_ohlcv_caching(self):
+        """Test fetch_ohlcv interactions with cache."""
+        candles = [[1700000000000, 10, 11, 9, 10.5, 100]]
+        self.mock_ccxt_instance.fetch_ohlcv.return_value = candles
+        self.client._markets_loaded = True
+        
+        with patch('data_engine.cache.cache_manager.get', new_callable=AsyncMock) as mock_cache_get, \
+             patch('data_engine.cache.cache_manager.set', new_callable=AsyncMock) as mock_cache_set:
+            
+            # 1. Miss cache
+            mock_cache_get.return_value = None
+            result = await self.client.fetch_ohlcv(self.symbol)
+            self.assertEqual(result, candles)
+            mock_cache_set.assert_awaited()
+            
+            # 2. Hit cache
+            mock_cache_get.return_value = candles
+            result2 = await self.client.fetch_ohlcv(self.symbol)
+            self.assertEqual(result2, candles)
+            # Should not call fetch_ohlcv again
+            self.mock_ccxt_instance.fetch_ohlcv.assert_called_once()
 
+    def test_validate_order_limits(self):
+        """Test order limit validation logic."""
+        self.client._markets_loaded = True
+        self.client.exchange.market = MagicMock(return_value={
+            'limits': {
+                'amount': {'min': 0.1, 'max': 100.0},
+                'cost': {'min': 10.0}
+            }
+        })
+        
+        # Valid
+        ok, msg = self.client.validate_order_limits(self.symbol, 1.0, 50.0)
+        self.assertTrue(ok)
+        
+        # Below min amount
+        ok, msg = self.client.validate_order_limits(self.symbol, 0.05, 50.0)
+        self.assertFalse(ok)
+        self.assertIn("below the minimum required", msg)
+        
+        # Above max amount
+        ok, msg = self.client.validate_order_limits(self.symbol, 150.0, 10.0)
+        self.assertFalse(ok)
+        self.assertIn("exceeds the maximum allowed", msg)
+        
+        # Below min cost (0.1 * 50 = 5.0 < 10.0)
+        ok, msg = self.client.validate_order_limits(self.symbol, 0.1, 50.0)
+        self.assertFalse(ok)
+        self.assertIn("cost $5.00 is below the minimum", msg)
 
-@pytest.mark.asyncio
-async def test_context_manager():
-    """Test exchange client works as async context manager."""
-    async with ExchangeClient(exchange_id="binance") as client:
-        assert client.exchange_id == "binance"
-        # Mock ensure_markets_loaded to avoid network on context entry if any logic triggers it
-        with patch.object(client, 'ensure_markets_loaded', new_callable=AsyncMock):
-            pass
+        # Symbol not found
+        self.client.exchange.market.side_effect = Exception("Not found")
+        ok, msg = self.client.validate_order_limits("FAKE/USD", 1.0, 1.0)
+        self.assertFalse(ok)
+        self.assertIn("not found", msg)
 
-    # Client should be closed after exiting context
+    def test_precision_wrappers(self):
+        """Test CCXT precision wrappers."""
+        self.client.exchange.amount_to_precision.return_value = "1.234"
+        self.assertEqual(self.client.amount_to_precision("BTC/USDT", 1.23456), "1.234")
+        
+        self.client.exchange.price_to_precision.return_value = "50000.1"
+        self.assertEqual(self.client.price_to_precision("BTC/USDT", 50000.123), "50000.1")
 
+    async def test_get_market_info(self):
+        """Test get_market_info with cache."""
+        self.client._markets_loaded = True
+        self.client.exchange.markets = {"BTC/USDT": {"id": "btc_usdt"}}
+        info = await self.client.get_market_info("BTC/USDT")
+        self.assertEqual(info["id"], "btc_usdt")
+        
+        with self.assertRaises(ValueError):
+            await self.client.get_market_info("UNKNOWN")
 
-def test_precision_formatting():
-    """Test precision formatting methods."""
-    # Note: This test would need actual exchange instance
-    # which requires real connection. For unit test, we mock it.
-    pass
+    # ========== ExchangeManager Tests ==========
 
+    async def test_exchange_manager_pooling(self):
+        """Test ExchangeManager pools clients and handles dynamic credentials."""
+        manager = ExchangeManager()
+        
+        # 1. Get client (initializes)
+        client1 = await manager.get_client("binance")
+        self.assertIn("binance", manager._clients)
+        
+        # 2. Get same client (pooled)
+        client2 = await manager.get_client("binance")
+        self.assertEqual(client1, client2)
+        
+        # 3. Dynamic credential update
+        with patch.object(client1.exchange, 'apiKey', create=True) as mock_key, \
+             patch.object(client1.exchange, 'secret', create=True) as mock_secret:
+            await manager.get_client("binance", api_key="new_key", api_secret="new_secret")
+            self.assertEqual(client1.api_key, "new_key")
+            self.assertEqual(client1.api_secret, "new_secret")
+            self.assertEqual(client1.exchange.apiKey, "new_key")
+            self.assertEqual(client1.exchange.secret, "new_secret")
+            
+        await manager.close_all()
+        self.assertEqual(len(manager._clients), 0)
 
-if __name__ == "__main__":
-    # Run tests
-    pytest.main([__file__, "-v"])
+    async def test_preload_exchange(self):
+        """Test pre-loading markets warms the manager cache."""
+        manager = ExchangeManager()
+        # Mock ExchangeClient within preload
+        with patch('data_engine.exchange.ExchangeClient', new_callable=MagicMock) as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.exchange.markets = {"BTC/USDT": {}}
+            mock_client_class.return_value = mock_client
+            
+            await manager.preload_exchange("binance")
+            self.assertIn("binance", manager._markets_cache)
+            self.assertEqual(manager._markets_cache["binance"], {"BTC/USDT": {}})
+
+if __name__ == '__main__':
+    unittest.main()

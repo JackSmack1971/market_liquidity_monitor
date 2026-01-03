@@ -21,3 +21,4 @@ results.xml
 audit_report.json
 outdated_packages.json
 final_test_report.txt
+.coverage
