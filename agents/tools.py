@@ -234,7 +234,12 @@ async def calculate_market_impact(
     # Validate order limits before simulation
     # Convert USD size to base amount for validation
     approx_amount = order_size_usd / best_price
-    is_valid, error_msg = client.validate_order_limits(symbol, approx_amount, best_price)
+    
+    # Enforce precision
+    precise_amount_str = client.amount_to_precision(symbol, approx_amount)
+    precise_amount = float(precise_amount_str)
+    
+    is_valid, error_msg = client.validate_order_limits(symbol, precise_amount, best_price)
     if not is_valid:
         raise ModelRetry(
             f"The proposed order does not meet {exchange} requirements: {error_msg}. "
@@ -288,6 +293,85 @@ async def calculate_market_impact(
     }
 
 
+async def get_historical_metrics(
+    ctx: RunContext[Any],
+    symbol: Annotated[str, Field(description="Trading pair symbol (e.g., 'BTC/USDT')")],
+    exchange: Annotated[str, Field(description="Exchange to source data from")] = "binance",
+    timeframe: Annotated[str, Field(description="Candle duration")] = "1h",
+    lookback_days: Annotated[int, Field(description="Number of days to analyze")] = 1,
+) -> dict:
+    """
+    Analyze historical price and volume trends to identify liquidity conditions.
+
+    Use this tool to detect 'liquidity droughts', volatility spikes, or unusual volume patterns
+    that may affect execution strategy.
+    
+    Returns:
+    - Volatility stats (std dev)
+    - Volume profile (average, min, max)
+    - List of outlier timestamps
+    """
+    try:
+        client = await exchange_manager.get_client(exchange)
+        
+        # Calculate start timestamp (since)
+        now_ms = int(asyncio.get_event_loop().time() * 1000) # Fallback if exchange time not avail
+        try:
+             now_ms = client.exchange.milliseconds()
+        except:
+             pass
+             
+        since = now_ms - (lookback_days * 24 * 60 * 60 * 1000)
+        
+        ohlcv = await client.fetch_ohlcv(symbol, timeframe=timeframe, since=since)
+        
+        if not ohlcv:
+             return {"error": "No historical data found for this period."}
+
+        # Process Data: [timestamp, open, high, low, close, volume]
+        closes = [candle[4] for candle in ohlcv]
+        volumes = [candle[5] for candle in ohlcv]
+        
+        # Calculate Metrics
+        import statistics
+        avg_price = statistics.mean(closes)
+        price_std_dev = statistics.stdev(closes) if len(closes) > 1 else 0
+        
+        avg_vol = statistics.mean(volumes)
+        vol_std_dev = statistics.stdev(volumes) if len(volumes) > 1 else 0
+        
+        # Outlier Detection
+        outliers = []
+        for candle in ohlcv:
+            ts, _, _, _, _, vol = candle
+            if vol > (avg_vol + 2 * vol_std_dev):
+                # Convert ms timestamp to readable string
+                from datetime import datetime, timezone
+                dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                outliers.append(f"{dt} (Vol: {vol:,.2f})")
+        
+        # Volume Consistency Score (Simple heuristic)
+        # Higher cv (std_dev/mean) -> Lower consistency
+        vol_cv = (vol_std_dev / avg_vol) if avg_vol > 0 else 0
+        consistency_score = max(1, min(10,int(10 * (1 - min(vol_cv, 1)))))
+
+        return {
+            "symbol": symbol,
+            "period": f"Last {lookback_days} day(s) ({timeframe} candles)",
+            "candle_count": len(ohlcv),
+            "price_volatility_std": round(price_std_dev, 4),
+            "avg_volume": round(avg_vol, 2),
+            "volume_consistency_score": consistency_score, # 1-10
+            "outliers": outliers[:5], # Top 5 recent outliers
+            "trend_summary": "High volatility" if (price_std_dev / avg_price) > 0.05 else "Stable range"
+        }
+
+    except NotImplementedError:
+        raise ModelRetry(f"Exchange '{exchange}' does not support historical data fetching.")
+    except Exception as e:
+        raise ModelRetry(f"Failed to fetch historical data: {str(e)}")
+
+
 # Tool registry for easy access
 AGENT_TOOLS = [
     get_order_book_depth,
@@ -295,4 +379,5 @@ AGENT_TOOLS = [
     get_market_metadata,
     compare_exchanges,
     calculate_market_impact,
+    get_historical_metrics,
 ]

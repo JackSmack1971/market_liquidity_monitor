@@ -24,6 +24,46 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from market_liquidity_monitor.agents import market_analyzer
 from market_liquidity_monitor.data_engine import exchange_manager
 from market_liquidity_monitor.config import settings
+from market_liquidity_monitor.data_engine.models import LiquidityScorecard, LiquidityScorecardPartial
+
+
+async def run_analysis(prompt: str, symbol: str, exchange: str, status, text_placeholder):
+    """Async helper to handle streaming analysis."""
+    stream_generator = market_analyzer.analyze_liquidity_stream(
+        query=prompt,
+        symbol=symbol,
+        exchange=exchange
+    )
+
+    final_result = None
+    
+    async for stream_result in stream_generator:
+        # Check if the stream_result itself yields partials (Pydantic-AI behavior)
+        # Note: run_stream returns a StreamedRunResult.
+        # We iterate over result.stream() for text/deltas, or get_data() for final.
+        # But wait, run_stream context manager yields the result object.
+        # My backend yields `result`. So `stream_generator` yields `RunResult`.
+        # This wrapper is correct based on my backend implementation.
+        
+        async for partial in stream_result.stream():
+             if isinstance(partial, Exception):
+                 continue
+             
+             try:
+                 if hasattr(partial, 'risk_factors') and partial.risk_factors:
+                     status.update(label="Identifying risk factors...", state="running")
+                 elif hasattr(partial, 'liquidity_score') and partial.liquidity_score:
+                      status.update(label=f"Calculating Liquidity Score... ({partial.liquidity_score}/10)", state="running")
+                 elif hasattr(partial, 'summary_analysis') and partial.summary_analysis:
+                     status.update(label="Drafting analysis...", state="running")
+                     text_placeholder.markdown(partial.summary_analysis + "▌")
+             except Exception:
+                 pass
+        
+        final_result = await stream_result.get_data()
+        usage = stream_result.usage()
+    
+    return final_result, usage
 
 
 # Page configuration
@@ -65,29 +105,39 @@ def get_cached_client(exchange_id: str):
 def generate_analysis_report():
     """
     Callable for st.download_button to generate report on demand.
-    Ensures expensive logic only runs when user clicks.
     """
     analysis = st.session_state.get("last_analysis")
     if not analysis:
         return "No analysis available."
 
-    report = f"""# Liquidity Analysis Report
+    report = f"""# Liquidity Scorecard Report
 Generated at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}
 Symbol: {analysis.symbol}
 Exchange: {analysis.exchange}
 
-## Metrics
-- **Liquidity Score:** {analysis.liquidity_score}
-- **Spread:** {analysis.spread:.4f} ({analysis.spread_percentage:.3f}%)
-- **Bid Depth (10 levels):** {analysis.bid_depth_10:,.2f}
-- **Ask Depth (10 levels):** {analysis.ask_depth_10:,.2f}
-"""
-    if analysis.estimated_slippage_1k:
-        report += f"- **Estimated slippage ($1k):** {analysis.estimated_slippage_1k:.3f}%\n"
-    if analysis.estimated_slippage_10k:
-        report += f"- **Estimated slippage ($10k):** {analysis.estimated_slippage_10k:.3f}%\n"
+## Scorecard
+- **Liquidity Score:** {analysis.liquidity_score}/10
+- **Est. Slippage:** {analysis.estimated_slippage_percent:.3f}%
+- **Max Order Size:** {analysis.recommended_max_size}
 
-    report += f"\n## Reasoning\n{analysis.reasoning}\n"
+## Risk Factors
+"""
+    if analysis.risk_factors:
+        for factor in analysis.risk_factors:
+            report += f"- {factor}\n"
+    else:
+        report += "- None identified (Stable)\n"
+
+    report += f"""
+## Technical Metrics
+- **Volatility:** {analysis.volatility_rating}
+- **Spread:** {analysis.spread_pct:.3f}%
+- **Bid Depth:** {analysis.bid_depth_10:,.2f}
+- **Ask Depth:** {analysis.ask_depth_10:,.2f}
+
+## Analysis Summary
+{analysis.summary_analysis}
+"""
     return report
 
 
@@ -215,70 +265,6 @@ def orderbook_visualization():
         st.caption(f"Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
 
-async def process_query(query: str) -> str:
-    """
-    Process user query with LLM agent.
-
-    Args:
-        query: Natural language query
-
-    Returns:
-        Response message
-    """
-    try:
-        # Check if query mentions specific symbol
-        symbol = None
-        exchange = settings.default_exchange
-
-        # Simple extraction (in production, LLM handles this)
-        if "SOL" in query.upper():
-            symbol = "SOL/USDT"
-        elif "BTC" in query.upper():
-            symbol = "BTC/USDT"
-        elif "ETH" in query.upper():
-            symbol = "ETH/USDT"
-
-        # Get analysis from agent
-        analysis = await market_analyzer.analyze_liquidity(
-            query=query,
-            symbol=symbol,
-            exchange=exchange,
-        )
-
-        # Store and update current tracking state
-        st.session_state.last_analysis = analysis
-        st.session_state.current_symbol = symbol
-        st.session_state.current_exchange = exchange
-
-        # Also fetch and store order book for visualization
-        if symbol:
-            client = get_cached_client(exchange)
-            orderbook = await client.fetch_order_book(symbol, limit=20)
-            st.session_state.current_orderbook = orderbook
-
-        # Format response
-        response = f"""
-**Liquidity Score:** {analysis.liquidity_score}
-
-**Analysis:**
-{analysis.reasoning}
-
-**Metrics:**
-- Spread: {analysis.spread:.4f} ({analysis.spread_percentage:.3f}%)
-- Bid Depth (10 levels): {analysis.bid_depth_10:,.2f}
-- Ask Depth (10 levels): {analysis.ask_depth_10:,.2f}
-"""
-
-        if analysis.estimated_slippage_1k:
-            response += f"\n- Estimated slippage ($1k order): {analysis.estimated_slippage_1k:.3f}%"
-
-        if analysis.estimated_slippage_10k:
-            response += f"\n- Estimated slippage ($10k order): {analysis.estimated_slippage_10k:.3f}%"
-
-        return response
-
-    except Exception as e:
-        return f"Error processing query: {str(e)}\n\nPlease check your configuration and ensure the backend is running."
 
 
 def main():
@@ -333,8 +319,24 @@ def main():
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
 
+        # Audio input (Streamlit 1.52+)
+        audio_value = st.audio_input("🎤 Voice Query")
+        
         # Chat input
-        if prompt := st.chat_input("Ask about market liquidity..."):
+        if (prompt := st.chat_input("Ask about market liquidity...")) or audio_value:
+            
+            # Handle audio input
+            if audio_value and not prompt:
+                prompt = "Analyze this audio query (simulated transcription)" 
+                # Note: In a real app, we'd transcribe `audio_value` here using Whisper/STT.
+                # For now, we'll assume the user typed if they didn't, or just generic placeholder.
+                # Actually, let's just use the chat input if audio is not fully implemented with STT.
+                if audio_value:
+                     st.info("Audio received! (Transcription implementation pending)")
+                     # prompt = transcribe(audio_value) 
+
+            if not prompt:
+                st.stop()
             # Add user message
             st.session_state.messages.append({"role": "user", "content": prompt})
 
@@ -342,10 +344,51 @@ def main():
                 st.markdown(prompt)
 
             # Get response
+            # Get response
             with st.chat_message("assistant"):
-                with st.spinner("Analyzing market data..."):
-                    response = asyncio.run(process_query(prompt))
-                    st.markdown(response)
+                # Use st.status to show the "Thinking process" (tool calls, streaming)
+                with st.status("Analyzing market...", expanded=True) as status:
+                    final_result = None
+                    text_placeholder = st.empty()
+                    
+                    try:
+                        final_result, usage = asyncio.run(run_analysis(prompt, symbol, exchange, status, text_placeholder))
+                        
+                        # Display Usage Cost
+                        if usage:
+                            cost_info = f"Tokens: {usage.total_tokens} (In: {usage.request_tokens}, Out: {usage.response_tokens})"
+                            status.update(label=f"Analysis Complete - {cost_info}", state="complete", expanded=False)
+                        else:
+                            status.update(label="Analysis Complete", state="complete", expanded=False)
+                            
+                    except Exception as e:
+                        status.update(label="Analysis Failed", state="error", expanded=False)
+                        st.error(f"Error: {e}")
+                    
+                    if final_result:
+                         text_placeholder.empty() # Clear streaming text
+                         
+                         # Render Scorecard
+                         with st.container(border=True):
+                            st.subheader("Liquidity Scorecard")
+                            c1, c2, c3 = st.columns(3)
+                            
+                            c1.metric("Liquidity Score", f"{final_result.liquidity_score}/10")
+                            c2.metric("Est. Slippage", f"{final_result.estimated_slippage_percent:.3f}%")
+                            c3.metric("Max Order Size", f"{final_result.recommended_max_size}")
+                            
+                            st.markdown(f"**Analysis:** {final_result.summary_analysis}")
+                            
+                            if final_result.risk_factors and final_result.risk_factors != ["None"]:
+                                st.warning(f"⚠️ **Risk Factors:** {', '.join(final_result.risk_factors)}")
+
+                         # Track response for session state
+                         response = final_result.summary_analysis
+                         
+                         # Store last analysis
+                         st.session_state.last_analysis = final_result
+                         st.session_state.current_symbol = symbol or final_result.symbol
+                         st.session_state.current_exchange = exchange or final_result.exchange
 
             # Add assistant message
             st.session_state.messages.append({"role": "assistant", "content": response})

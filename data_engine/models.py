@@ -115,6 +115,49 @@ class OrderBook(BaseModel):
         return total_volume, total_value
 
 
+class LiquidityScorecard(BaseModel):
+    """Structured analysis of market liquidity and execution risk."""
+
+    symbol: str = Field(..., description="The trading pair symbol analyzed (e.g., SOL/USDT)")
+    exchange: str = Field(..., description="The exchange where the data was sourced from")
+    timestamp: datetime = Field(..., description="The exact time of this analysis")
+
+    liquidity_score: int = Field(
+        ..., ge=1, le=10,
+        description="A score from 1-10 indicating overall liquidity health (10 is best)."
+    )
+    estimated_slippage_percent: float = Field(
+        ..., ge=0,
+        description="The estimated percentage of price movement for the requested order size."
+    )
+    recommended_max_size: float = Field(
+        ..., ge=0,
+        description="The maximum suggested order size to keep slippage within acceptable limits."
+    )
+    risk_factors: List[str] = Field(
+        ..., description="Specific concerns identified (e.g., 'Thin ask side', 'High volatility')."
+    )
+    summary_analysis: str = Field(
+        ..., description="A concise narrative explanation of the liquidity state."
+    )
+
+    # Technical Metrics (for consistent tracking)
+    spread_pct: float = Field(..., description="Bid-ask spread percentage")
+    bid_depth_10: float = Field(..., description="Combined volume of top 10 bid levels")
+    ask_depth_10: float = Field(..., description="Combined volume of top 10 ask levels")
+
+
+class HistoricalLiquidityTrend(BaseModel):
+    """
+    Analysis of historical liquidity trends over a specific period.
+    """
+    period_summary: str = Field(description="Narrative of liquidity behavior over the period")
+    volatility_index: float = Field(ge=0, description="Standard deviation of price movements")
+    volume_consistency_score: int = Field(ge=1, le=10, description="1-10 score of volume stability (10 = very stable)")
+    significant_outliers: List[str] = Field(description="Specific timestamps of liquidity shocks or volume spikes")
+    volatility_rating: str = Field(..., description="Market stability assessment (STABLE/MODERATE/VOLATILE)")
+
+
 class LiquidityAnalysis(BaseModel):
     """Refined analysis of market liquidity with structured metrics for UI rendering."""
 

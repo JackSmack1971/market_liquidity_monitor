@@ -12,7 +12,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.fallback import FallbackModel
 
 from config import settings
-from data_engine.models import LiquidityAnalysis
+from data_engine.models import LiquidityScorecard
 from agents.tools import AGENT_TOOLS
 
 
@@ -22,9 +22,9 @@ SYSTEM_PROMPT = """You are an expert market liquidity analyst with deep knowledg
 Your role is to:
 1. Analyze real-time order book data from cryptocurrency exchanges.
 2. Identify liquidity risks like thin order books, large bid-ask spreads, or price walls.
-3. Provide synthesized insights that explain what the data MEANS for a trader.
+3. Provide a structured Liquidity Scorecard (BaseModel) with validated metrics.
 4. Estimate market impact and slippage for potential trades.
-5. Give clear, actionable assessments (HIGH/MEDIUM/LOW liquidity scores).
+5. Give clear, actionable assessments through a 1-10 scorecard and risk warnings.
 
 When analyzing order books, consider:
 - Bid-ask spread (tight spreads = good liquidity).
@@ -34,17 +34,23 @@ When analyzing order books, consider:
 - Potential slippage for different order sizes.
 - Volatility: If spreads are wide or depth is unstable, mark as 'VOLATILE'.
 
-Always return a structured response with:
-- liquidity_score: Overall grade.
-- volatility_rating: Market stability assessment.
-- spread & depth metrics: Taken directly from tool outputs.
-- reasoning: Detailed technical justification.
+USE TOOLS STRATEGICALLY:
+- `get_order_book_depth` & `calculate_market_impact` -> Quantitative snapshot.
+- `get_historical_metrics` -> Trend analysis, volatility checks, and "liquidity drought" detection.
+- `get_market_metadata` -> IMPERATIVE before recommending specific order sizes.
+
+MANDATORY: Return a LiquidityScorecard object.
+- liquidity_score: 1-10 (10 is perfect liquidity).
+- recommended_max_size: Practical limit for execution based on current depth.
+- risk_factors: List of specific issues or 'None' if stable.
+- summary_analysis: Concise professional narrative.
+- Technical metrics: Taken directly from tool outputs.
 
 If a tool returns an error or asks for clarification (ModelRetry), follow its guidance strictly.
 """
 
 
-def create_market_agent() -> Agent[None, LiquidityAnalysis]:
+def create_market_agent() -> Agent[None, LiquidityScorecard]:
     """
     Create and configure the market analysis agent with FallbackModel.
 
@@ -90,7 +96,7 @@ def create_market_agent() -> Agent[None, LiquidityAnalysis]:
     # Create the agent
     agent = Agent(
         combined_model,
-        output_type=LiquidityAnalysis,
+        output_type=LiquidityScorecard,
         system_prompt=SYSTEM_PROMPT,
         retries=getattr(settings, 'agent_max_retries', 3),
     )
@@ -118,7 +124,7 @@ class MarketAnalyzer:
         query: str,
         symbol: Optional[str] = None,
         exchange: Optional[str] = None,
-    ) -> LiquidityAnalysis:
+    ) -> LiquidityScorecard:
         """
         Analyze market liquidity based on a natural language query.
         """
@@ -160,7 +166,7 @@ class MarketAnalyzer:
         order_size_usd: float,
         side: str = "buy",
         exchange: str = "binance",
-    ) -> LiquidityAnalysis:
+    ) -> LiquidityScorecard:
         """
         Estimate slippage for a potential order.
         """

@@ -64,20 +64,20 @@ async def test_analyze_background_task():
     """Verify that /analyze triggers background snapshot when symbol/exchange are provided."""
     with patch('data_engine.historical.historical_tracker.capture_snapshot', AsyncMock()) as mock_capture:
         with patch('api.routes.MarketAnalyzer.analyze_liquidity', AsyncMock()) as mock_analyze:
-            # Provide valid LiquidityAnalysis data to pass validation (using snake_case or alias as needed)
+            # Provide valid LiquidityScorecard data to pass validation
             valid_analysis = {
                 "symbol": "SOL/USDT",
                 "exchange": "binance",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "liquidity_1pct": [10.0, 1000.0],
-                "liquidity_2pct": [20.0, 2000.0],
-                "volatility_rating": "LOW",
-                "liquidity_score": "GOOD",
-                "reasoning": "Test reasoning",
-                "spread": 0.01,
-                "spread_percentage": 0.1,
+                "liquidity_score": 8,
+                "estimated_slippage_percent": 0.05,
+                "recommended_max_size": 10000.0,
+                "risk_factors": ["None"],
+                "summary_analysis": "Test scorecard summary",
+                "spread_pct": 0.01,
                 "bid_depth_10": 500.0,
-                "ask_depth_10": 500.0
+                "ask_depth_10": 500.0,
+                "volatility_rating": "STABLE"
             }
             mock_analyze.return_value = valid_analysis
             
