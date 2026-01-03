@@ -41,6 +41,11 @@ class Settings(BaseSettings):
 
     # Security
     cors_origins: list[str] = ["http://localhost:8501", "http://localhost:3000"]
+    
+    # Observability (Logfire)
+    logfire_token: Optional[str] = None
+    logfire_service_name: str = "market-liquidity-monitor"
+    logfire_environment: str = "development"
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -5,8 +5,11 @@ Prevents cascading failures by stopping execution when a service is failing cons
 """
 
 import asyncio
+from enum import Enum
 from datetime import datetime, timedelta
-from typing import Callable, Any, TypeVar, Optional
+from typing import Optional, Callable, Any, TypeVar
+import logfire
+from config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -75,12 +78,16 @@ class CircuitBreaker:
             if current_state == "HALF_OPEN":
                 self._reset()
                 logger.info(f"Circuit '{self.name}' recovered. State -> CLOSED")
+                if settings.logfire_token:
+                    logfire.info("circuit_recovered", circuit=self.name, state="CLOSED")
                 
             return result
             
         except Exception as e:
             self._record_failure()
             logger.warning(f"Circuit '{self.name}' failure {self._failures}/{self.failure_threshold}: {e}")
+            if settings.logfire_token:
+                logfire.error(f"circuit_failure: {str(e)}", circuit=self.name, failures=self._failures)
             raise e
 
     def _record_failure(self):
@@ -92,6 +99,8 @@ class CircuitBreaker:
             if self._state != "OPEN":
                 self._state = "OPEN"
                 logger.error(f"Circuit '{self.name}' OPENED after {self._failures} failures.")
+                if settings.logfire_token:
+                    logfire.error("circuit_opened", circuit=self.name, failures=self._failures)
 
     def _reset(self):
         """Reset circuit to closed state."""

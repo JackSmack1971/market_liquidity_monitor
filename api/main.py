@@ -8,9 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import asyncio
+import logfire
+from contextlib import asynccontextmanager
 
 from config import settings
-from data_engine import exchange_manager, cache_manager
+from data_engine import exchange_manager, cache_manager, stream_manager
 from data_engine.database import db_manager
 from api.routes import router
 
@@ -22,6 +24,16 @@ async def lifespan(app: FastAPI):
 
     Handles startup and shutdown tasks.
     """
+    # Configure Logfire
+    if settings.logfire_token:
+        logfire.configure(
+            service_name=settings.logfire_service_name,
+            token=settings.logfire_token,
+            environment=settings.logfire_environment
+        )
+        logfire.instrument_fastapi(app)
+        print("Logfire observability enabled.")
+    
     # Startup
     print("Starting Market Liquidity Monitor API...")
     print(f"Default exchange: {getattr(settings, 'default_exchange', 'binance')}")
@@ -43,6 +55,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("Shutting down...")
+    await stream_manager.stop_all()
     await exchange_manager.close_all()
     await cache_manager.disconnect()
     await db_manager.disconnect()

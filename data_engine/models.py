@@ -116,35 +116,70 @@ class OrderBook(BaseModel):
 
 
 class LiquidityScorecard(BaseModel):
-    """Structured analysis of market liquidity and execution risk."""
-
-    symbol: str = Field(..., description="The trading pair symbol analyzed (e.g., SOL/USDT)")
-    exchange: str = Field(..., description="The exchange where the data was sourced from")
-    timestamp: datetime = Field(..., description="The exact time of this analysis")
-
+    """
+    Structured scorecard for liquidity analysis.
+    
+    This model is used by the MarketAgent to provide consistent, machine-readable validation
+    of market conditions.
+    """
+    
+    symbol: str = Field(..., description="Trading pair analyzed")
+    exchange: str = Field(..., description="Primary exchange analyzed")
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC), description="Analysis timestamp")
+    
     liquidity_score: int = Field(
-        ..., ge=1, le=10,
-        description="A score from 1-10 indicating overall liquidity health (10 is best)."
+        ..., 
+        ge=1, 
+        le=10, 
+        description="Overall liquidity rating (1-10). 10 = Excellent depth/tight spread."
     )
+    
+    spread_analysis: str = Field(..., description="Analysis of bid-ask spread health")
+    depth_analysis: str = Field(..., description="Analysis of order book depth and resilience")
+    
     estimated_slippage_percent: float = Field(
-        ..., ge=0,
-        description="The estimated percentage of price movement for the requested order size."
+        ..., 
+        description="Expected slippage for a standard $10k market order"
     )
-    recommended_max_size: float = Field(
-        ..., ge=0,
-        description="The maximum suggested order size to keep slippage within acceptable limits."
+    
+    recommended_max_size: str = Field(
+        ..., 
+        description="Recommended maximum order size to avoid significant impact (e.g., '$50,000')"
     )
+    
     risk_factors: List[str] = Field(
-        ..., description="Specific concerns identified (e.g., 'Thin ask side', 'High volatility')."
+        default_factory=list, 
+        description="List of detected risks (e.g., 'Low Volume', 'Asymmetric Depth', 'Thin Orderbook')"
     )
+    
     summary_analysis: str = Field(
-        ..., description="A concise narrative explanation of the liquidity state."
+        ..., 
+        description="Executive summary of the market conditions and execution advice."
+    )
+    
+    market_impact_report: Optional['MarketImpactReport'] = Field(
+        None, 
+        description="Detailed slippage analysis if a specific trade size was simulated."
     )
 
-    # Technical Metrics (for consistent tracking)
-    spread_pct: float = Field(..., description="Bid-ask spread percentage")
-    bid_depth_10: float = Field(..., description="Combined volume of top 10 bid levels")
-    ask_depth_10: float = Field(..., description="Combined volume of top 10 ask levels")
+class MarketImpactReport(BaseModel):
+    """
+    Detailed report on market impact and slippage for a specific order size.
+    """
+    symbol: str = Field(..., description="Trading pair")
+    side: str = Field(..., description="Order side (buy or sell)")
+    target_size: float = Field(..., description="Requested order size in base currency")
+    target_value_usd: float = Field(..., description="Requested order value in USD")
+    
+    expected_fill_price: float = Field(..., description="Volume Weighted Average Price (VWAP) of the fill")
+    reference_price: float = Field(..., description="Mid price at start of simulation")
+    
+    slippage_bps: float = Field(..., description="Slippage in basis points (1 bp = 0.01%)")
+    price_impact_percent: float = Field(..., description="Price impact as percentage")
+    
+    critical_depth_level: Optional[float] = Field(None, description="Price level reached to fill order")
+    
+    warning: Optional[str] = Field(None, description="Warning if order exceeds available book depth")
 
 
 class HistoricalLiquidityTrend(BaseModel):

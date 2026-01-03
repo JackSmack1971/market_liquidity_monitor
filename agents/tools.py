@@ -3,8 +3,8 @@ from pydantic import Field
 import asyncio
 from pydantic_ai import ModelRetry, RunContext
 
-from data_engine import OrderBook, exchange_manager
-from data_engine.models import LiquidityAnalysis, ExchangeComparison
+from data_engine import OrderBook, exchange_manager, analytics
+from data_engine.models import LiquidityAnalysis, ExchangeComparison, MarketImpactReport
 
 
 async def get_order_book_depth(
@@ -370,6 +370,64 @@ async def get_historical_metrics(
         raise ModelRetry(f"Exchange '{exchange}' does not support historical data fetching.")
     except Exception as e:
         raise ModelRetry(f"Failed to fetch historical data: {str(e)}")
+
+
+
+async def calculate_market_impact(
+    ctx: RunContext[Any],
+    symbol: Annotated[str, Field(description="Trading pair symbol (e.g., 'SOL/USDT')")],
+    side: Annotated[str, Field(description="Order side: 'buy' or 'sell'")],
+    size: Annotated[float, Field(description="Order size in BASE currency (e.g., 500 SOL)")],
+    exchange: Annotated[str, Field(description="Target exchange")] = "binance",
+) -> MarketImpactReport:
+    """
+    Simulate a market order to calculate expected slippage and impact.
+    
+    Use this tool to answer 'What if' questions like 'What is the impact of selling 1000 SOL?'.
+    It 'walks the order book' to determine the Volume Weighted Average Price (VWAP) 
+    and compares it to the mid-price.
+    
+    CRITICAL: This tool validates the order against exchange-specific limits (min/max amount, min cost)
+    and triggers HIGH/MEDIUM severity warnings if slippage exceeds safe thresholds.
+    
+    Returns:
+    - Expected Fill Price (VWAP)
+    - Slippage in Basis Points (bps)
+    - Critical depth levels
+    - Execution warnings (if any)
+    """
+    try:
+        # 1. Fetch market metadata for limits
+        client = await exchange_manager.get_client(exchange)
+        
+        # Get market info for precision and limits
+        try:
+            await client.exchange.load_markets()
+            market_info = client.exchange.market(symbol)
+            market_limits = market_info.get('limits', {})
+        except Exception as e:
+            # If market info unavailable, proceed without limits validation
+            market_limits = None
+        
+        # 2. Fetch deep order book
+        # Standard fetch is 20. Use 50 for impact to ensure depth coverage.
+        limit = 50
+        orderbook = await client.fetch_order_book(symbol, limit=limit)
+        
+        # 3. Run Analytics with limits validation
+        report = analytics.calculate_market_impact(
+            orderbook=orderbook,
+            side=side,
+            size=size,
+            is_quote_size=False,  # Assuming input is always Base amount for now as per docstring
+            market_limits=market_limits,
+            slippage_threshold_bps=100.0  # Default threshold: 100 bps (1%)
+        )
+        
+        return report
+        
+    except Exception as e:
+        raise ModelRetry(f"Failed to calculate market impact: {str(e)}")
 
 
 # Tool registry for easy access

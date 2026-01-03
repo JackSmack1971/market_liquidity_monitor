@@ -4,6 +4,7 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 pydantic-settings==2.12.0
 pydantic-ai>=0.0.13
+logfire[fastapi]>=0.46.0
 
 # CCXT for exchange integration
 ccxt==4.5.30
@@ -16,7 +17,7 @@ pandas>=2.1.0
 numpy>=2.4.0
 
 # Streamlit frontend
-streamlit>=1.29.0
+streamlit>=1.52.2
 plotly>=5.18.0
 
 # Caching (optional - falls back to in-memory if unavailable)

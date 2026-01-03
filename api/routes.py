@@ -10,7 +10,7 @@ Provides endpoints for:
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from typing import Optional
 
-from data_engine import ExchangeClient, OrderBook
+from data_engine import ExchangeClient, OrderBook, stream_manager
 from data_engine.models import LiquidityScorecard, MarketQuery
 from agents import MarketAnalyzer
 from api.dependencies import get_exchange_client, get_market_analyzer
@@ -53,6 +53,31 @@ async def get_orderbook(
             status_code=500,
             detail=f"Failed to fetch order book: {str(e)}"
         )
+
+
+@router.post("/stream/start")
+async def start_stream(
+    symbol: str,
+    exchange: str = Query(default="binance", description="Exchange name"),
+    depth: int = Query(default=20, ge=1, le=100)
+):
+    """
+    Start background polling stream for a symbol.
+    """
+    await stream_manager.start_stream(exchange, symbol, depth)
+    return {"status": "started", "stream": f"{exchange}:{symbol}"}
+
+
+@router.post("/stream/stop")
+async def stop_stream(
+    symbol: str,
+    exchange: str = Query(default="binance", description="Exchange name")
+):
+    """
+    Stop background polling stream.
+    """
+    await stream_manager.stop_stream(exchange, symbol)
+    return {"status": "stopped", "stream": f"{exchange}:{symbol}"}
 
 
 @router.get("/search/{query}", response_model=list[str])

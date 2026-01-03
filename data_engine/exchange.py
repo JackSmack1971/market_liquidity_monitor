@@ -6,7 +6,7 @@ from decimal import Decimal
 from functools import wraps
 from data_engine.models import OrderBook, OrderBookLevel
 from data_engine.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
-from config import settings
+from config.settings import settings
 
 
 def with_retry(retries: int = 3, backoff: float = 1.0):
@@ -333,16 +333,30 @@ class ExchangeManager:
             self._markets_cache[exchange_id] = client.exchange.markets
             print(f"✅ Market cache warmed for {exchange_id}")
 
-    async def get_client(self, exchange_id: str = None) -> ExchangeClient:
+    async def get_client(self, exchange_id: str = None, api_key: str = None, api_secret: str = None) -> ExchangeClient:
         """
         Get or create pooled exchange client.
         Ensures stable rate limit buckets across requests.
+        Values from arguments override settings for User-Managed Credential flow.
         """
         exchange_id = exchange_id or settings.default_exchange
+        
+        # Create new if missing
         if exchange_id not in self._clients:
             print(f"🚀 Initializing pooled client for {exchange_id}")
-            self._clients[exchange_id] = ExchangeClient(exchange_id)
-        return self._clients[exchange_id]
+            self._clients[exchange_id] = ExchangeClient(exchange_id, api_key=api_key, api_secret=api_secret)
+        
+        # Update credentials if provided and changed (Dynamic Injection)
+        client = self._clients[exchange_id]
+        if api_key and (client.api_key != api_key):
+             client.api_key = api_key
+             client.exchange.apiKey = api_key
+             if api_secret:
+                 client.api_secret = api_secret
+                 client.exchange.secret = api_secret
+             print(f"🔑 Updated credentials for {exchange_id}")
+
+        return client
 
     async def close_all(self):
         """Close all pooled exchange connections."""

@@ -11,9 +11,14 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.models.fallback import FallbackModel
 
-from config import settings
+from config.settings import settings
 from data_engine.models import LiquidityScorecard
 from agents.tools import AGENT_TOOLS
+import logfire
+
+# Instrument Pydantic AI for Observability
+if settings.logfire_token:
+    logfire.instrument_pydantic_ai()
 
 
 # System prompt for the market analysis agent
@@ -47,21 +52,30 @@ MANDATORY: Return a LiquidityScorecard object.
 - Technical metrics: Taken directly from tool outputs.
 
 If a tool returns an error or asks for clarification (ModelRetry), follow its guidance strictly.
+
+CRITICAL: If the user asks about "selling X amount" or "buying Y amount", or asks about "slippage" for a specific size:
+1. Call `calculate_market_impact` for that size.
+2. Include the returned `MarketImpactReport` in your `LiquidityScorecard`.
+3. Highlight the `slippage_bps` and `expected_fill_price` in your summary.
 """
 
 
-def create_market_agent() -> Agent[None, LiquidityScorecard]:
+def create_market_agent(api_key: Optional[str] = None) -> Agent[None, LiquidityScorecard]:
     """
     Create and configure the market analysis agent with FallbackModel.
 
-    Primary: OpenRouter (specified in settings)
-    Fallback: Gemini 1.5 Pro (resiliency)
+    Args:
+        api_key: OpenRouter API key provided by user (Session State).
     """
-    # Primary Model (OpenRouter/OpenAI compatible)
-    openrouter_key = getattr(settings, 'openrouter_api_key', None)
+    # 1. Primary Model (OpenRouter)
+    # Prefer injected key, fallback to settings (for dev/testing)
+    openrouter_key = api_key or getattr(settings, 'openrouter_api_key', None)
+    
     if not openrouter_key:
-        print("Warning: OPENROUTER_API_KEY not found. Using dummy key for testing.")
-        openrouter_key = "dummy-openrouter-key"
+        # In Privacy-First mode, this implies strict failure if not provided
+        # Use dummy key to allow instantiation (import-time), but requests will fail.
+        print("Warning: No OpenRouter Key provided. Using placeholder.")
+        openrouter_key = "unconfigured_key_placeholder"
 
     from pydantic_ai.providers.openai import OpenAIProvider
     from openai import AsyncOpenAI
@@ -115,9 +129,14 @@ class MarketAnalyzer:
     Wraps the Pydantic-AI agent with convenience methods.
     """
 
-    def __init__(self):
-        """Initialize the market analyzer."""
-        self.agent = create_market_agent()
+    def __init__(self, api_key: Optional[str] = None):
+        """
+        Initialize the market analyzer.
+        
+        Args:
+            api_key: User provided OpenRouter key (Privacy-First).
+        """
+        self.agent = create_market_agent(api_key=api_key)
 
     async def analyze_liquidity(
         self,
