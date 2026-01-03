@@ -31,24 +31,41 @@ A system that combines real-time market data with LLM reasoning to monitor liqui
 ## Components
 
 ### 1. Data Engine (CCXT)
+
 - **Async Order Book Fetching**: Non-blocking market data retrieval
 - **Multi-Exchange Support**: Unified interface across exchanges
 - **Precision Handling**: Exchange-specific decimal requirements
 
 ### 2. Reasoning Agent (Pydantic-AI + OpenRouter)
+
 - **Tool Calling**: LLM can invoke market data functions
 - **Synthesized Analysis**: Beyond raw numbers to insights
 - **Type-Safe Outputs**: Structured responses via Pydantic models
 
 ### 3. Backend (FastAPI)
+
 - **Async Execution**: Responsive server architecture
 - **Dependency Injection**: Clean separation of concerns
 - **Security**: Environment-based secrets management
 
 ### 4. Frontend (Streamlit)
+
 - **Chat Interface**: Natural language queries
 - **Real-time Visualization**: Order book depth charts
 - **Session Management**: Conversation history
+
+### 5. Advanced Features (New)
+
+- **Historical Analysis**: OHLCV trend tracking with volatility metrics
+- **Liquidity Alerts**: Hybrid detection (Depth + Trend) for anomalies
+- **Market Impact**: Simulate order slippage scaling
+- **System Health**: Circuit Breaker status and connection monitoring
+
+### 6. Resilience & Fault Tolerance
+
+- **Circuit Breaker**: Auto-suspends failing exchanges (Threshold: 5, Timeout: 30s)
+- **Connection Pooling**: Reuses CCXT clients for rate limit stability
+- **Caching**: 5-minute TTL for historical data
 
 ## Installation
 
@@ -64,23 +81,27 @@ cp .env.example .env
 ## Configuration
 
 Required environment variables:
+
 - `OPENROUTER_API_KEY`: Your OpenRouter API key
 - `EXCHANGE_API_KEY`: Exchange API key (if using authenticated endpoints)
 - `EXCHANGE_API_SECRET`: Exchange API secret
 
 ## Usage
 
-### Start the FastAPI backend:
+### Start the FastAPI backend
+
 ```bash
 uvicorn market_liquidity_monitor.api.main:app --reload
 ```
 
-### Run the Streamlit frontend:
+### Run the Streamlit frontend
+
 ```bash
-streamlit run market_liquidity_monitor/frontend/app.py
+streamlit run market_liquidity_monitor/frontend/enhanced_app.py
 ```
 
-### Example Queries:
+### Example Queries
+
 - "What is the SOL liquidity like on Binance?"
 - "Show me the order book depth for BTC/USDT"
 - "Is there enough liquidity to execute a 10 ETH sell order?"
@@ -97,10 +118,14 @@ market_liquidity_monitor/
 │   ├── market_agent.py    # Pydantic-AI agent
 │   └── tools.py           # Agent tool definitions
 ├── data_engine/            # Market data layer
-│   ├── exchange.py        # CCXT wrapper
-│   └── models.py          # Data models
+│   ├── exchange.py        # CCXT wrapper & Circuit Breaker integration
+│   ├── models.py          # Pydantic data models
+│   ├── circuit_breaker.py # Fault tolerance state machine
+│   ├── historical.py      # Historical data & anomaly detection
+│   └── database.py        # Database connection & persistence
 ├── frontend/               # Streamlit UI
-│   └── app.py             # Chat interface
+│   ├── app.py             # Legacy chat interface
+│   └── enhanced_app.py    # Main dashboard with Alerts & Health
 ├── config/                 # Configuration
 │   └── settings.py        # Environment config
 └── tests/                  # Test suite
@@ -117,7 +142,6 @@ market_liquidity_monitor/
 ## Future Enhancements
 
 - Support for more exchanges
-- Advanced liquidity metrics (slippage estimation, market impact)
-- Historical liquidity analysis
-- Alert system for liquidity events
+- Advanced liquidity metrics (slippage estimation, market impact) - **Partially Implemented**
 - Portfolio optimization based on liquidity
+- User authentication and multi-tenancy
