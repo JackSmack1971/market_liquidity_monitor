@@ -33,6 +33,7 @@ cp .env.example .env
 ```
 
 **Minimum required configuration in `.env`:**
+
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-your-key-here
 ```
@@ -50,8 +51,9 @@ uvicorn market_liquidity_monitor.api.main:app --reload
 ```
 
 The API will be available at:
-- **Swagger Docs**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/api/v1/health
+
+- **Swagger Docs**: <http://localhost:8000/docs>
+- **Health Check**: <http://localhost:8000/api/v1/health>
 
 ## Step 3: Run the Frontend (Option B - Streamlit App)
 
@@ -59,16 +61,16 @@ For the interactive chat interface:
 
 ```bash
 # Start the Streamlit app
-streamlit run market_liquidity_monitor/frontend/app.py
+streamlit run frontend/app.py
 ```
 
-The app will open in your browser at http://localhost:8501
+The app will open in your browser at <http://localhost:8501>
 
 ## Step 4: Try It Out
 
 ### Using the Streamlit Interface
 
-1. Open http://localhost:8501
+1. Open <http://localhost:8501>
 2. Type a natural language query in the chat:
    - "What is the SOL liquidity like?"
    - "Show me BTC order book depth on Binance"
@@ -78,11 +80,13 @@ The app will open in your browser at http://localhost:8501
 ### Using the REST API
 
 **Fetch Order Book:**
+
 ```bash
 curl "http://localhost:8000/api/v1/orderbook/SOL/USDT?exchange=binance&levels=20"
 ```
 
 **Analyze Liquidity (Natural Language):**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/analyze" \
   -H "Content-Type: application/json" \
@@ -94,11 +98,13 @@ curl -X POST "http://localhost:8000/api/v1/analyze" \
 ```
 
 **Quick Liquidity Check:**
+
 ```bash
 curl "http://localhost:8000/api/v1/quick-check/BTC/USDT?exchange=binance"
 ```
 
 **Estimate Slippage:**
+
 ```bash
 curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&order_size_usd=5000&side=buy&exchange=binance"
 ```
@@ -150,6 +156,7 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
 ## Architecture Components
 
 ### 1. Data Engine (CCXT)
+
 - **File**: `data_engine/exchange.py`
 - **Purpose**: Fetches real-time order book data from exchanges
 - **Key Features**:
@@ -158,6 +165,7 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
   - Precision handling for exchange-specific requirements
 
 ### 2. Reasoning Agent (Pydantic-AI)
+
 - **File**: `agents/market_agent.py`
 - **Purpose**: LLM-powered analysis of market data
 - **Key Features**:
@@ -166,6 +174,7 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
   - Synthesized reasoning beyond raw numbers
 
 ### 3. Backend (FastAPI)
+
 - **File**: `api/main.py`
 - **Purpose**: REST API server
 - **Key Features**:
@@ -174,6 +183,7 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
   - Auto-generated OpenAPI docs
 
 ### 4. Frontend (Streamlit)
+
 - **File**: `frontend/app.py`
 - **Purpose**: Interactive chat interface
 - **Key Features**:
@@ -184,26 +194,32 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
 ## Example Use Cases
 
 ### 1. Pre-Trade Analysis
+
 **Query**: "I want to buy $50,000 worth of SOL. What's the slippage?"
 
 **What Happens**:
+
 1. Agent fetches SOL/USDT order book
 2. Calculates cumulative volume at different price levels
 3. Estimates price impact and slippage
 4. Provides liquidity score and recommendations
 
 ### 2. Market Monitoring
+
 **Query**: "Show me the order book depth for BTC/USDT"
 
 **What Happens**:
+
 1. Fetches real-time order book
 2. Displays interactive depth chart
 3. Shows key metrics (spread, depth, liquidity zones)
 
 ### 3. Exchange Comparison
+
 **Query**: "Which exchange has better ETH liquidity, Binance or Coinbase?"
 
 **What Happens**:
+
 1. Fetches order books from both exchanges
 2. Compares spread, depth, and liquidity metrics
 3. Provides side-by-side analysis
@@ -211,19 +227,23 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
 ## Troubleshooting
 
 ### Error: "Missing OPENROUTER_API_KEY"
+
 - Make sure you've created a `.env` file (copy from `.env.example`)
 - Verify your OpenRouter API key is valid
 
 ### Error: "Failed to fetch order book"
+
 - Check your internet connection
 - Some exchanges may have rate limits
 - Try a different exchange or symbol
 
 ### Streamlit app not loading data
+
 - Ensure you're running from the correct directory
 - Check that `market_liquidity_monitor` is in your Python path
 
 ### Import errors
+
 - Verify all dependencies are installed: `pip install -r requirements.txt`
 - Make sure you're using Python 3.9+
 
@@ -232,6 +252,7 @@ curl -X POST "http://localhost:8000/api/v1/estimate-slippage?symbol=ETH/USDT&ord
 ### Using Different LLM Models
 
 Edit `.env`:
+
 ```bash
 # Use GPT-4o instead of Claude
 DEFAULT_MODEL=openai/gpt-4o
@@ -246,6 +267,7 @@ DEFAULT_MODEL=anthropic/claude-3-haiku
 ### Changing Default Exchange
 
 Edit `.env`:
+
 ```bash
 DEFAULT_EXCHANGE=coinbase
 ```
@@ -253,6 +275,7 @@ DEFAULT_EXCHANGE=coinbase
 ### Adding Exchange Authentication
 
 For accessing private endpoints (optional):
+
 ```bash
 EXCHANGE_API_KEY=your_api_key
 EXCHANGE_API_SECRET=your_api_secret
@@ -273,7 +296,7 @@ pytest market_liquidity_monitor/tests/test_exchange.py -v
 
 ## Next Steps
 
-- Explore the API docs at http://localhost:8000/docs
+- Explore the API docs at <http://localhost:8000/docs>
 - Try different exchanges and trading pairs
 - Customize the LLM prompts in `agents/market_agent.py`
 - Add new analysis tools in `agents/tools.py`
@@ -291,5 +314,5 @@ pytest market_liquidity_monitor/tests/test_exchange.py -v
 - Check the main README.md for detailed architecture
 - Review the code comments and docstrings
 - Open an issue on GitHub
-- Consult CCXT docs: https://docs.ccxt.com
-- Pydantic-AI docs: https://ai.pydantic.dev
+- Consult CCXT docs: <https://docs.ccxt.com>
+- Pydantic-AI docs: <https://ai.pydantic.dev>

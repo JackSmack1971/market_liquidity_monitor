@@ -54,12 +54,15 @@ A system that combines real-time market data with LLM reasoning to monitor liqui
 - **Real-time Visualization**: Order book depth charts
 - **Session Management**: Conversation history
 
-### 5. Advanced Features (New)
+### 5. Advanced Features
 
 - **Historical Analysis**: OHLCV trend tracking with volatility metrics
 - **Liquidity Alerts**: Hybrid detection (Depth + Trend) for anomalies
 - **Market Impact**: Simulate order slippage scaling
 - **System Health**: Circuit Breaker status and connection monitoring
+- **Multi-Exchange Comparison**: Parallel liquidity analysis with arbitrage detection (NEW)
+- **Historical Backtesting**: Time-travel execution simulation with synthetic order books (NEW)
+- **Docker Deployment**: Production-grade containerization (see [DOCKER_DEPLOYMENT.md](DOCKER_DEPLOYMENT.md))
 
 ### 6. Resilience & Fault Tolerance
 
@@ -97,7 +100,7 @@ uvicorn market_liquidity_monitor.api.main:app --reload
 ### Run the Streamlit frontend
 
 ```bash
-streamlit run market_liquidity_monitor/frontend/enhanced_app.py
+streamlit run frontend/app.py
 ```
 
 ### Example Queries
